@@ -2,7 +2,7 @@ package jadx.core.dex.attributes;
 
 import java.util.List;
 
-import jadx.core.dex.attributes.annotations.Annotation;
+import jadx.api.plugins.input.data.annotations.IAnnotation;
 
 public abstract class AttrNode implements IAttributeNode {
 
@@ -64,7 +64,7 @@ public abstract class AttrNode implements IAttributeNode {
 	}
 
 	@Override
-	public Annotation getAnnotation(String cls) {
+	public IAnnotation getAnnotation(String cls) {
 		return storage.getAnnotation(cls);
 	}
 
@@ -97,6 +97,17 @@ public abstract class AttrNode implements IAttributeNode {
 		unloadIfEmpty();
 	}
 
+	/**
+	 * Remove all attribute with exceptions from {@link AType#SKIP_ON_UNLOAD}
+	 */
+	public void unloadAttributes() {
+		if (storage == EMPTY_ATTR_STORAGE) {
+			return;
+		}
+		storage.unloadAttributes();
+		unloadIfEmpty();
+	}
+
 	@Override
 	public List<String> getAttributesStringsList() {
 		return storage.getAttributeStrings();
@@ -107,6 +118,7 @@ public abstract class AttrNode implements IAttributeNode {
 		return storage.toString();
 	}
 
+	@Override
 	public boolean isAttrStorageEmpty() {
 		return storage.isEmpty();
 	}

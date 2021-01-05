@@ -29,6 +29,7 @@ import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.trycatch.TryCatchBlock;
 import jadx.core.dex.visitors.AbstractVisitor;
 import jadx.core.utils.BlockUtils;
+import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.core.dex.visitors.blocksmaker.BlockSplitter.connect;
@@ -39,7 +40,7 @@ public class BlockProcessor extends AbstractVisitor {
 
 	@Override
 	public void visit(MethodNode mth) {
-		if (mth.isNoCode()) {
+		if (mth.isNoCode() || mth.getBasicBlocks().isEmpty()) {
 			return;
 		}
 		processBlocksTree(mth);
@@ -57,7 +58,7 @@ public class BlockProcessor extends AbstractVisitor {
 			clearBlocksState(mth);
 			computeDominators(mth);
 		}
-		markReturnBlocks(mth);
+		updateExitBlocks(mth);
 
 		int i = 0;
 		while (modifyBlocksTree(mth)) {
@@ -65,11 +66,10 @@ public class BlockProcessor extends AbstractVisitor {
 			clearBlocksState(mth);
 			// recalculate dominators tree
 			computeDominators(mth);
-			markReturnBlocks(mth);
+			updateExitBlocks(mth);
 
 			if (i++ > 100) {
-				mth.addWarn("CFG modification limit reached, blocks count: " + mth.getBasicBlocks().size());
-				break;
+				throw new JadxRuntimeException("CFG modification limit reached, blocks count: " + mth.getBasicBlocks().size());
 			}
 		}
 		checkForUnreachableBlocks(mth);
@@ -336,12 +336,33 @@ public class BlockProcessor extends AbstractVisitor {
 		block.setDomFrontier(domFrontier);
 	}
 
-	private static void markReturnBlocks(MethodNode mth) {
+	private static void updateExitBlocks(MethodNode mth) {
 		mth.getExitBlocks().clear();
 		mth.getBasicBlocks().forEach(block -> {
-			if (BlockUtils.checkLastInsnType(block, InsnType.RETURN)) {
-				block.add(AFlag.RETURN);
-				mth.getExitBlocks().add(block);
+			boolean noSuccessors = block.getSuccessors().isEmpty();
+			boolean exitBlock = false;
+			InsnNode lastInsn = BlockUtils.getLastInsn(block);
+			if (lastInsn != null) {
+				InsnType insnType = lastInsn.getType();
+				if (insnType == InsnType.RETURN) {
+					block.add(AFlag.RETURN);
+					exitBlock = true;
+					if (!noSuccessors) {
+						throw new JadxRuntimeException("Found a block after RETURN instruction: " + lastInsn + " in block: " + block);
+					}
+				} else if (insnType == InsnType.THROW) {
+					if (noSuccessors) {
+						exitBlock = true;
+					}
+				}
+			}
+			if (exitBlock) {
+				mth.addExitBlock(block);
+			} else if (noSuccessors
+					&& !mth.isVoidReturn()
+					&& !mth.isConstructor()) {
+				mth.addComment("JADX INFO: Unexpected exit block: " + block
+						+ ". Expect last instruction to be RETURN or THROW, got: " + lastInsn);
 			}
 		});
 	}
@@ -413,7 +434,48 @@ public class BlockProcessor extends AbstractVisitor {
 				return true;
 			}
 		}
-		return splitReturn(mth);
+		if (mergeConstReturn(mth)) {
+			return true;
+		}
+		return splitReturnBlocks(mth);
+	}
+
+	private static boolean mergeConstReturn(MethodNode mth) {
+		if (mth.isVoidReturn()) {
+			return false;
+		}
+
+		boolean changed = false;
+		for (BlockNode exitBlock : new ArrayList<>(mth.getExitBlocks())) {
+			BlockNode pred = Utils.getOne(exitBlock.getPredecessors());
+			if (pred != null) {
+				InsnNode constInsn = Utils.getOne(pred.getInstructions());
+				if (constInsn != null && constInsn.isConstInsn()) {
+					RegisterArg constArg = constInsn.getResult();
+					InsnNode returnInsn = BlockUtils.getLastInsn(exitBlock);
+					if (returnInsn != null) {
+						InsnArg retArg = returnInsn.getArg(0);
+						if (constArg.sameReg(retArg)) {
+							mergeConstAndReturnBlocks(mth, exitBlock, pred);
+							changed = true;
+						}
+					}
+				}
+			}
+		}
+		if (changed) {
+			removeMarkedBlocks(mth);
+			cleanExitNodes(mth);
+		}
+		return changed;
+	}
+
+	private static void mergeConstAndReturnBlocks(MethodNode mth, BlockNode exitBlock, BlockNode pred) {
+		pred.getInstructions().addAll(exitBlock.getInstructions());
+		pred.copyAttributesFrom(exitBlock);
+		BlockSplitter.removeConnection(pred, exitBlock);
+		exitBlock.getInstructions().clear();
+		exitBlock.add(AFlag.REMOVE);
 	}
 
 	private static boolean independentBlockTreeMod(MethodNode mth) {
@@ -448,9 +510,42 @@ public class BlockProcessor extends AbstractVisitor {
 			LoopInfo loop = loops.get(0);
 			return insertBlocksForBreak(mth, loop)
 					|| insertBlocksForContinue(mth, loop)
-					|| insertBlockForProdecessors(mth, loop);
+					|| insertBlockForProdecessors(mth, loop)
+					|| insertPreHeader(mth, loop);
 		}
 		return false;
+	}
+
+	/**
+	 * Insert simple path block before loop header
+	 */
+	private static boolean insertPreHeader(MethodNode mth, LoopInfo loop) {
+		BlockNode start = loop.getStart();
+		List<BlockNode> preds = start.getPredecessors();
+		int predsCount = preds.size() - 1; // don't count back edge
+		if (predsCount == 1) {
+			return false;
+		}
+		if (predsCount == 0) {
+			if (!start.contains(AFlag.MTH_ENTER_BLOCK)) {
+				mth.addWarnComment("Unexpected block without predecessors: " + start);
+			}
+			BlockNode newEnterBlock = BlockSplitter.startNewBlock(mth, -1);
+			newEnterBlock.add(AFlag.SYNTHETIC);
+			newEnterBlock.add(AFlag.MTH_ENTER_BLOCK);
+			mth.setEnterBlock(newEnterBlock);
+			start.remove(AFlag.MTH_ENTER_BLOCK);
+			BlockSplitter.connect(newEnterBlock, start);
+			return true;
+		}
+		// multiple predecessors
+		BlockNode preHeader = BlockSplitter.startNewBlock(mth, -1);
+		preHeader.add(AFlag.SYNTHETIC);
+		for (BlockNode pred : new ArrayList<>(preds)) {
+			BlockSplitter.replaceConnection(pred, start, preHeader);
+		}
+		BlockSplitter.connect(preHeader, start);
+		return true;
 	}
 
 	/**
@@ -604,16 +699,25 @@ public class BlockProcessor extends AbstractVisitor {
 		return true;
 	}
 
+	private static boolean splitReturnBlocks(MethodNode mth) {
+		boolean changed = false;
+		for (BlockNode exitBlock : mth.getExitBlocks()) {
+			if (splitReturn(mth, exitBlock)) {
+				changed = true;
+			}
+		}
+		if (changed) {
+			cleanExitNodes(mth);
+		}
+		return changed;
+	}
+
 	/**
 	 * Splice return block if several predecessors presents
 	 */
-	private static boolean splitReturn(MethodNode mth) {
-		if (mth.getExitBlocks().size() != 1) {
-			return false;
-		}
-		BlockNode exitBlock = mth.getExitBlocks().get(0);
-		if (exitBlock.getInstructions().size() != 1
-				|| exitBlock.contains(AFlag.SYNTHETIC)
+	private static boolean splitReturn(MethodNode mth, BlockNode exitBlock) {
+		if (exitBlock.contains(AFlag.SYNTHETIC)
+				|| exitBlock.contains(AFlag.ORIG_RETURN)
 				|| exitBlock.contains(AType.SPLITTER_BLOCK)) {
 			return false;
 		}
@@ -625,37 +729,45 @@ public class BlockProcessor extends AbstractVisitor {
 		if (preds.size() < 2) {
 			return false;
 		}
-		InsnNode returnInsn = exitBlock.getInstructions().get(0);
-		if (returnInsn.getArgsCount() != 0 && !isReturnArgAssignInPred(preds, returnInsn)) {
+		InsnNode returnInsn = BlockUtils.getLastInsn(exitBlock);
+		if (returnInsn == null) {
 			return false;
 		}
+		if (returnInsn.getArgsCount() == 1
+				&& exitBlock.getInstructions().size() == 1
+				&& !isReturnArgAssignInPred(preds, returnInsn)) {
+			return false;
+		}
+
 		boolean first = true;
 		for (BlockNode pred : preds) {
 			BlockNode newRetBlock = BlockSplitter.startNewBlock(mth, -1);
 			newRetBlock.add(AFlag.SYNTHETIC);
-			InsnNode newRetInsn;
 			if (first) {
-				newRetInsn = returnInsn;
 				newRetBlock.add(AFlag.ORIG_RETURN);
+				newRetBlock.getInstructions().addAll(exitBlock.getInstructions());
 				first = false;
 			} else {
-				newRetInsn = duplicateReturnInsn(returnInsn);
+				for (InsnNode oldInsn : exitBlock.getInstructions()) {
+					newRetBlock.getInstructions().add(oldInsn.copyWithoutSsa());
+				}
 			}
-			newRetBlock.getInstructions().add(newRetInsn);
 			BlockSplitter.replaceConnection(pred, exitBlock, newRetBlock);
 		}
-		cleanExitNodes(mth);
 		return true;
 	}
 
 	private static boolean isReturnArgAssignInPred(List<BlockNode> preds, InsnNode returnInsn) {
-		RegisterArg arg = (RegisterArg) returnInsn.getArg(0);
-		int regNum = arg.getRegNum();
-		for (BlockNode pred : preds) {
-			for (InsnNode insnNode : pred.getInstructions()) {
-				RegisterArg result = insnNode.getResult();
-				if (result != null && result.getRegNum() == regNum) {
-					return true;
+		InsnArg retArg = returnInsn.getArg(0);
+		if (retArg.isRegister()) {
+			RegisterArg arg = (RegisterArg) retArg;
+			int regNum = arg.getRegNum();
+			for (BlockNode pred : preds) {
+				for (InsnNode insnNode : pred.getInstructions()) {
+					RegisterArg result = insnNode.getResult();
+					if (result != null && result.getRegNum() == regNum) {
+						return true;
+					}
 				}
 			}
 		}
@@ -671,18 +783,6 @@ public class BlockProcessor extends AbstractVisitor {
 				iterator.remove();
 			}
 		}
-	}
-
-	private static InsnNode duplicateReturnInsn(InsnNode returnInsn) {
-		InsnNode insn = new InsnNode(returnInsn.getType(), returnInsn.getArgsCount());
-		if (returnInsn.getArgsCount() == 1) {
-			RegisterArg arg = (RegisterArg) returnInsn.getArg(0);
-			insn.addArg(InsnArg.reg(arg.getRegNum(), arg.getInitType()));
-		}
-		insn.copyAttributesFrom(returnInsn);
-		insn.setOffset(returnInsn.getOffset());
-		insn.setSourceLine(returnInsn.getSourceLine());
-		return insn;
 	}
 
 	private static void removeMarkedBlocks(MethodNode mth) {

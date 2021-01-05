@@ -1,5 +1,5 @@
 language: java
-sudo: false
+os: linux
 dist: trusty
 
 # don't build on tag push
@@ -22,19 +22,25 @@ env:
 
 jdk:
   - openjdk8
-  - oraclejdk8
   - openjdk11
 
 script: ./gradlew clean build
 
 jobs:
   include:
+    - stage: checks
+      jdk: openjdk11
+      if: branch = master AND repo = env(MAIN_REPO) AND type = push
+      script: bash scripts/travis-checks.sh
+
     - stage: deploy-unstable
       jdk: openjdk8
       if: branch = master AND repo = env(MAIN_REPO) AND type = push
       script: bash scripts/travis-master.sh
 
     - stage: deploy-release
+      language: node_js
       jdk: openjdk8
+      node_js: 11
       if: branch = release AND repo = env(MAIN_REPO) AND type = push
       script: bash scripts/travis-release.sh

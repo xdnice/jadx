@@ -2,10 +2,12 @@ package jadx.gui.treemodel;
 
 import java.util.Iterator;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.gui.utils.OverlayIcon;
@@ -32,6 +34,10 @@ public class JMethod extends JNode {
 
 	@Override
 	public JavaNode getJavaNode() {
+		return mth;
+	}
+
+	public JavaMethod getJavaMethod() {
 		return mth;
 	}
 
@@ -67,6 +73,11 @@ public class JMethod extends JNode {
 		return icon;
 	}
 
+	@Override
+	public boolean canRename() {
+		return !mth.getMethodNode().contains(AFlag.DONT_RENAME);
+	}
+
 	String makeBaseString() {
 		if (mth.isClassInit()) {
 			return "{...}";
@@ -94,9 +105,30 @@ public class JMethod extends JNode {
 	}
 
 	@Override
+	public String makeStringHtml() {
+		return UiUtils.typeFormatHtml(makeBaseString(), getReturnType());
+	}
+
+	@Override
 	public String makeLongString() {
 		String name = mth.getDeclaringClass().getFullName() + '.' + makeBaseString();
 		return UiUtils.typeFormat(name, getReturnType());
+	}
+
+	@Override
+	public String makeLongStringHtml() {
+		String name = mth.getDeclaringClass().getFullName() + '.' + makeBaseString();
+		return UiUtils.typeFormatHtml(name, getReturnType());
+	}
+
+	@Override
+	public String makeDescString() {
+		return UiUtils.typeStr(getReturnType()) + " " + makeBaseString();
+	}
+
+	@Override
+	public boolean hasDescString() {
+		return true;
 	}
 
 	@Override

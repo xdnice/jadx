@@ -3,11 +3,14 @@ package jadx.gui.treemodel;
 import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.jetbrains.annotations.Nullable;
 
+import jadx.api.ICodeInfo;
 import jadx.api.JavaClass;
 import jadx.api.JavaField;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.info.AccessInfo;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
@@ -48,6 +51,11 @@ public class JClass extends JLoadableNode {
 		getRootClass().load();
 	}
 
+	@Override
+	public boolean canRename() {
+		return !cls.getClassNode().contains(AFlag.DONT_RENAME);
+	}
+
 	public synchronized void load() {
 		if (!loaded) {
 			cls.decompile();
@@ -55,6 +63,13 @@ public class JClass extends JLoadableNode {
 			loaded = true;
 		}
 		update();
+	}
+
+	public synchronized void reload() {
+		cls.reload();
+		loaded = true;
+		update();
+		cls.unload();
 	}
 
 	public synchronized void update() {
@@ -74,6 +89,12 @@ public class JClass extends JLoadableNode {
 				add(new JMethod(m, this));
 			}
 		}
+	}
+
+	@Override
+	public @Nullable ICodeInfo getCodeInfo() {
+		load();
+		return cls.getClassNode().getCode();
 	}
 
 	@Override
@@ -145,11 +166,6 @@ public class JClass extends JLoadableNode {
 	@Override
 	public int getLine() {
 		return cls.getDecompiledLine();
-	}
-
-	@Override
-	public Integer getSourceLine(int line) {
-		return cls.getSourceLine(line);
 	}
 
 	@Override

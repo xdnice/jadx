@@ -1,5 +1,7 @@
 package jadx.api;
 
+import java.util.List;
+
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.FieldNode;
@@ -39,11 +41,24 @@ public final class JavaField implements JavaNode {
 	}
 
 	public ArgType getType() {
-		return ArgType.tryToResolveClassAlias(field.dex(), field.getType());
+		return ArgType.tryToResolveClassAlias(field.root(), field.getType());
 	}
 
+	@Override
 	public int getDecompiledLine() {
 		return field.getDecompiledLine();
+	}
+
+	@Override
+	public List<JavaNode> getUseIn() {
+		return getDeclaringClass().getRootDecompiler().convertNodes(field.getUseIn());
+	}
+
+	/**
+	 * Internal API. Not Stable!
+	 */
+	public FieldNode getFieldNode() {
+		return field;
 	}
 
 	@Override

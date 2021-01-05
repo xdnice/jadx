@@ -1,13 +1,11 @@
 package jadx.gui.settings;
 
-import java.awt.Font;
-import java.awt.GraphicsDevice;
-import java.awt.GraphicsEnvironment;
-import java.awt.Window;
+import java.awt.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -15,7 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import javax.swing.JFrame;
+import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.jetbrains.annotations.Nullable;
@@ -26,6 +24,7 @@ import com.beust.jcommander.Parameter;
 
 import jadx.api.JadxArgs;
 import jadx.cli.JadxCLIArgs;
+import jadx.cli.LogHelper;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
@@ -37,12 +36,15 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
 	private static final int RECENT_PROJECTS_COUNT = 15;
-	private static final int CURRENT_SETTINGS_VERSION = 9;
+	private static final int CURRENT_SETTINGS_VERSION = 10;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
 	static final Set<String> SKIP_FIELDS = new HashSet<>(Arrays.asList(
-			"files", "input", "outDir", "outDirSrc", "outDirRes", "verbose", "printVersion", "printHelp"));
+			"files", "input", "outDir", "outDirSrc", "outDirRes", "outputFormat",
+			"verbose", "quiet", "logLevel",
+			"printVersion", "printHelp"));
+
 	private Path lastSaveProjectPath = USER_HOME;
 	private Path lastOpenFilePath = USER_HOME;
 	private Path lastSaveFilePath = USER_HOME;
@@ -56,7 +58,7 @@ public class JadxSettings extends JadxCLIArgs {
 	protected String excludedPackages = "";
 	private boolean autoSaveProject = false;
 
-	private boolean showHeapUsageBar = true;
+	private boolean showHeapUsageBar = false;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
@@ -151,8 +153,8 @@ public class JadxSettings extends JadxCLIArgs {
 		sync();
 	}
 
-	public Iterable<Path> getRecentProjects() {
-		return recentProjects;
+	public List<Path> getRecentProjects() {
+		return Collections.unmodifiableList(recentProjects);
 	}
 
 	public void addRecentProject(Path projectPath) {
@@ -193,11 +195,15 @@ public class JadxSettings extends JadxCLIArgs {
 	}
 
 	private static boolean isContainedInAnyScreen(WindowLocation pos) {
-		for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
-			if (gd.getDefaultConfiguration().getBounds().contains(pos.getBounds())) {
-				return true;
+		Rectangle bounds = pos.getBounds();
+		if (bounds.getX() > 0 && bounds.getY() > 0) {
+			for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+				if (gd.getDefaultConfiguration().getBounds().contains(bounds)) {
+					return true;
+				}
 			}
 		}
+		LOG.debug("Window saved position was ignored: {}", pos);
 		return false;
 	}
 
@@ -276,6 +282,10 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setDeobfuscationUseSourceNameAsAlias(boolean deobfuscationUseSourceNameAsAlias) {
 		this.deobfuscationUseSourceNameAsAlias = deobfuscationUseSourceNameAsAlias;
+	}
+
+	public void setDeobfuscationParseKotlinMetadata(boolean deobfuscationParseKotlinMetadata) {
+		this.deobfuscationParseKotlinMetadata = deobfuscationParseKotlinMetadata;
 	}
 
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
@@ -360,6 +370,10 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 	}
 
+	public void setLogLevel(LogHelper.LogLevelEnum level) {
+		this.logLevel = level;
+	}
+
 	public String getEditorThemePath() {
 		return editorThemePath;
 	}
@@ -382,6 +396,7 @@ public class JadxSettings extends JadxCLIArgs {
 		if (fromVersion == 0) {
 			setDeobfuscationMinLength(3);
 			setDeobfuscationUseSourceNameAsAlias(true);
+			setDeobfuscationParseKotlinMetadata(true);
 			setDeobfuscationForceSave(true);
 			setThreadsCount(1);
 			setReplaceConsts(true);
@@ -424,6 +439,10 @@ public class JadxSettings extends JadxCLIArgs {
 			fromVersion++;
 		}
 		if (fromVersion == 8) {
+			fromVersion++;
+		}
+		if (fromVersion == 9) {
+			showHeapUsageBar = false;
 			fromVersion++;
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;

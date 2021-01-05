@@ -5,7 +5,8 @@ import java.security.cert.Certificate;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.text.StringEscapeUtils;
@@ -14,6 +15,8 @@ import org.slf4j.LoggerFactory;
 
 import com.android.apksig.ApkVerifier;
 
+import jadx.api.ResourceFile;
+import jadx.api.ResourceType;
 import jadx.gui.JadxWrapper;
 import jadx.gui.utils.CertificateManager;
 import jadx.gui.utils.NLS;
@@ -32,11 +35,20 @@ public class ApkSignature extends JNode {
 	public static ApkSignature getApkSignature(JadxWrapper wrapper) {
 		// Only show the ApkSignature node if an AndroidManifest.xml is present.
 		// Without a manifest the Google ApkVerifier refuses to work.
-		if (wrapper.getResources().stream().noneMatch(r -> "AndroidManifest.xml".equals(r.getName()))) {
+		File apkFile = null;
+		for (ResourceFile resFile : wrapper.getResources()) {
+			if (resFile.getType() == ResourceType.MANIFEST) {
+				ResourceFile.ZipRef zipRef = resFile.getZipRef();
+				if (zipRef != null) {
+					apkFile = zipRef.getZipFile();
+					break;
+				}
+			}
+		}
+		if (apkFile == null) {
 			return null;
 		}
-		File openFile = wrapper.getOpenFile();
-		return new ApkSignature(openFile);
+		return new ApkSignature(apkFile);
 	}
 
 	public ApkSignature(File openFile) {
@@ -83,7 +95,6 @@ public class ApkSignature extends JNode {
 			final String sigFailKey = "apkSignature.signatureFailed";
 
 			writeIssues(builder, err, result.getErrors());
-			writeIssues(builder, warn, result.getWarnings());
 
 			if (!result.getV1SchemeSigners().isEmpty()) {
 				builder.append("<h2>");
@@ -124,6 +135,26 @@ public class ApkSignature extends JNode {
 				}
 				builder.append("</blockquote>");
 			}
+			if (!result.getV3SchemeSigners().isEmpty()) {
+				builder.append("<h2>");
+				builder.escape(NLS.str(result.isVerifiedUsingV3Scheme() ? sigSuccKey : sigFailKey, 3));
+				builder.append("</h2>\n");
+
+				builder.append("<blockquote>");
+				for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
+					builder.append("<h3>");
+					builder.escape(NLS.str("apkSignature.signer"));
+					builder.append(" ");
+					builder.append(Integer.toString(signer.getIndex() + 1));
+					builder.append("</h3>");
+					writeCertificate(builder, signer.getCertificate());
+					writeIssues(builder, err, signer.getErrors());
+					writeIssues(builder, warn, signer.getWarnings());
+				}
+				builder.append("</blockquote>");
+			}
+			writeIssues(builder, warn, result.getWarnings());
+
 			this.content = builder.toString();
 		} catch (Exception e) {
 			LOG.error(e.getMessage(), e);

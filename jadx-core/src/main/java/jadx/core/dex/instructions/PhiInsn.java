@@ -10,8 +10,10 @@ import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.RegisterArg;
+import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
@@ -21,11 +23,15 @@ public final class PhiInsn extends InsnNode {
 	private final List<BlockNode> blockBinds;
 
 	public PhiInsn(int regNum, int predecessors) {
-		super(InsnType.PHI, predecessors);
-		this.blockBinds = new ArrayList<>(predecessors);
+		this(predecessors);
 		setResult(InsnArg.reg(regNum, ArgType.UNKNOWN));
 		add(AFlag.DONT_INLINE);
 		add(AFlag.DONT_GENERATE);
+	}
+
+	private PhiInsn(int argsCount) {
+		super(InsnType.PHI, argsCount);
+		this.blockBinds = new ArrayList<>(argsCount);
 	}
 
 	public RegisterArg bindArg(BlockNode pred) {
@@ -72,11 +78,25 @@ public final class PhiInsn extends InsnNode {
 	}
 
 	@Override
-	protected RegisterArg removeArg(int index) {
+	public RegisterArg removeArg(int index) {
 		RegisterArg reg = (RegisterArg) super.removeArg(index);
 		blockBinds.remove(index);
 		reg.getSVar().updateUsedInPhiList();
 		return reg;
+	}
+
+	@Nullable
+	public RegisterArg getArgBySsaVar(SSAVar ssaVar) {
+		if (getArgsCount() == 0) {
+			return null;
+		}
+		for (InsnArg insnArg : getArguments()) {
+			RegisterArg reg = (RegisterArg) insnArg;
+			if (reg.getSVar() == ssaVar) {
+				return reg;
+			}
+		}
+		return null;
 	}
 
 	@Override
@@ -89,15 +109,11 @@ public final class PhiInsn extends InsnNode {
 		if (argIndex == -1) {
 			return false;
 		}
-		BlockNode pred = getBlockByArgIndex(argIndex);
-		if (pred == null) {
-			throw new JadxRuntimeException("Unknown predecessor block by arg " + from + " in PHI: " + this);
-		}
-		removeArg(argIndex);
+		((RegisterArg) to).getSVar().addUsedInPhi(this);
+		super.setArg(argIndex, to);
 
-		RegisterArg reg = (RegisterArg) to;
-		bindArg(reg, pred);
-		reg.getSVar().addUsedInPhi(this);
+		InsnRemover.unbindArgUsage(null, from);
+		((RegisterArg) from).getSVar().updateUsedInPhiList();
 		return true;
 	}
 
@@ -109,6 +125,11 @@ public final class PhiInsn extends InsnNode {
 	@Override
 	public void setArg(int n, InsnArg arg) {
 		throw new JadxRuntimeException("Direct setArg is forbidden for PHI insn, bindArg must be used");
+	}
+
+	@Override
+	public InsnNode copy() {
+		return copyCommonParams(new PhiInsn(getArgsCount()));
 	}
 
 	@Override

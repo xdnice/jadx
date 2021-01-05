@@ -32,7 +32,7 @@ import jadx.gui.jobs.BackgroundJob;
 import jadx.gui.jobs.BackgroundWorker;
 import jadx.gui.jobs.DecompileJob;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.codearea.CodeArea;
+import jadx.gui.ui.codearea.AbstractCodeArea;
 import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.NLS;
@@ -58,6 +58,7 @@ public abstract class CommonSearchDialog extends JDialog {
 
 	protected String highlightText;
 	protected boolean highlightTextCaseInsensitive = false;
+	protected boolean highlightTextUseRegex = false;
 
 	public CommonSearchDialog(MainWindow mainWindow) {
 		super(mainWindow);
@@ -403,7 +404,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		private final Map<Integer, Component> componentCache = new HashMap<>();
 
 		public ResultsTableCellRenderer() {
-			RSyntaxTextArea area = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea area = AbstractCodeArea.getDefaultArea(mainWindow);
 			this.font = area.getFont();
 			this.codeSelectedColor = area.getSelectionColor();
 			this.codeBackground = area.getBackground();
@@ -446,7 +447,7 @@ public abstract class CommonSearchDialog extends JDialog {
 
 		private Component makeCell(JNode node, int column) {
 			if (column == 0) {
-				JLabel label = new JLabel(node.makeLongString() + "  ", node.getIcon(), SwingConstants.LEFT);
+				JLabel label = new JLabel(node.makeLongStringHtml() + "  ", node.getIcon(), SwingConstants.LEFT);
 				label.setFont(font);
 				label.setOpaque(true);
 				label.setToolTipText(label.getText());
@@ -455,7 +456,7 @@ public abstract class CommonSearchDialog extends JDialog {
 			if (!node.hasDescString()) {
 				return emptyLabel;
 			}
-			RSyntaxTextArea textArea = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea textArea = AbstractCodeArea.getDefaultArea(mainWindow);
 			textArea.setLayout(new GridLayout(1, 1));
 			textArea.setEditable(false);
 			textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA);
@@ -466,6 +467,7 @@ public abstract class CommonSearchDialog extends JDialog {
 				SearchContext searchContext = new SearchContext(highlightText);
 				searchContext.setMatchCase(!highlightTextCaseInsensitive);
 				searchContext.setMarkAll(true);
+				searchContext.setRegularExpression(highlightTextUseRegex);
 				SearchEngine.markAll(textArea, searchContext);
 			}
 			return textArea;
@@ -516,17 +518,15 @@ public abstract class CommonSearchDialog extends JDialog {
 		}
 	}
 
-	protected void loadStartCommon() {
+	private void loadStartCommon() {
 		setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
 		progressPane.setIndeterminate(true);
 		progressPane.setVisible(true);
-		resultsTable.setEnabled(false);
 		warnLabel.setVisible(false);
 	}
 
 	private void loadFinishedCommon() {
 		setCursor(null);
-		resultsTable.setEnabled(true);
 		progressPane.setVisible(false);
 
 		TextSearchIndex textIndex = cache.getTextIndex();

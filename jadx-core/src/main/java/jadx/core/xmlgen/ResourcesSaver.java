@@ -2,6 +2,7 @@ package jadx.core.xmlgen;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 import org.slf4j.Logger;
@@ -9,17 +10,17 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.ResourceFile;
 import jadx.api.ResourcesLoader;
-import jadx.core.codegen.CodeWriter;
+import jadx.api.plugins.utils.ZipSecurity;
+import jadx.core.dex.visitors.SaveCode;
 import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 import jadx.core.utils.files.FileUtils;
-import jadx.core.utils.files.ZipSecurity;
 
 public class ResourcesSaver implements Runnable {
 	private static final Logger LOG = LoggerFactory.getLogger(ResourcesSaver.class);
 
 	private final ResourceFile resourceFile;
-	private File outDir;
+	private final File outDir;
 
 	public ResourcesSaver(File outDir, ResourceFile resourceFile) {
 		this.resourceFile = resourceFile;
@@ -58,8 +59,7 @@ public class ResourcesSaver implements Runnable {
 		switch (rc.getDataType()) {
 			case TEXT:
 			case RES_TABLE:
-				CodeWriter cw = rc.getText();
-				cw.save(outFile);
+				SaveCode.save(rc.getText(), outFile);
 				return;
 
 			case DECODED_DATA:
@@ -90,9 +90,11 @@ public class ResourcesSaver implements Runnable {
 
 	private void saveResourceFile(ResourceFile resFile, File outFile) throws JadxException {
 		ResourcesLoader.decodeStream(resFile, (size, is) -> {
+			Path target = outFile.toPath();
 			try {
-				Files.copy(is, outFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+				Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
 			} catch (Exception e) {
+				Files.deleteIfExists(target); // delete partially written file
 				throw new JadxRuntimeException("Resource file save error", e);
 			}
 			return null;

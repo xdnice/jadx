@@ -8,9 +8,12 @@ import java.util.Set;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import jadx.core.Consts;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.AttrNode;
 import jadx.core.dex.attributes.nodes.RegDebugInfoAttr;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.PhiInsn;
@@ -20,7 +23,9 @@ import jadx.core.dex.visitors.typeinference.TypeInfo;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-public class SSAVar extends AttrNode {
+public class SSAVar {
+	private static final Logger LOG = LoggerFactory.getLogger(SSAVar.class);
+
 	private final int regNum;
 	private final int version;
 
@@ -28,7 +33,7 @@ public class SSAVar extends AttrNode {
 	private final List<RegisterArg> useList = new ArrayList<>(2);
 	private List<PhiInsn> usedInPhi = null;
 
-	private TypeInfo typeInfo = new TypeInfo();
+	private final TypeInfo typeInfo = new TypeInfo();
 
 	@Nullable("Set in InitCodeVariables pass")
 	private CodeVar codeVar;
@@ -66,8 +71,42 @@ public class SSAVar extends AttrNode {
 		return useList.size();
 	}
 
-	// must be used only from RegisterArg#setType()
-	void setType(ArgType type) {
+	@Nullable
+	public ArgType getImmutableType() {
+		if (isTypeImmutable()) {
+			return assign.getInitType();
+		}
+		return null;
+	}
+
+	public boolean isTypeImmutable() {
+		return assign.contains(AFlag.IMMUTABLE_TYPE);
+	}
+
+	public void markAsImmutable(ArgType type) {
+		assign.add(AFlag.IMMUTABLE_TYPE);
+		ArgType initType = assign.getInitType();
+		if (!initType.equals(type)) {
+			assign.forceSetInitType(type);
+			if (Consts.DEBUG_TYPE_INFERENCE) {
+				LOG.debug("Update immutable type at var {} assign with type: {} previous type: {}", this.toShortString(), type, initType);
+			}
+		}
+	}
+
+	public void setType(ArgType type) {
+		ArgType imType = getImmutableType();
+		if (imType != null && !imType.equals(type)) {
+			throw new JadxRuntimeException("Can't change immutable type " + imType + " to " + type + " for " + this);
+		}
+		updateType(type);
+	}
+
+	public void forceSetType(ArgType type) {
+		updateType(type);
+	}
+
+	private void updateType(ArgType type) {
 		typeInfo.setType(type);
 		if (codeVar != null) {
 			codeVar.setType(type);
@@ -127,6 +166,27 @@ public class SSAVar extends AttrNode {
 		return usedInPhi;
 	}
 
+	/**
+	 * Concat assign PHI insn and usedInPhi
+	 */
+	public List<PhiInsn> getPhiList() {
+		InsnNode assignInsn = getAssign().getParentInsn();
+		if (assignInsn != null && assignInsn.getType() == InsnType.PHI) {
+			PhiInsn assignPhi = (PhiInsn) assignInsn;
+			if (usedInPhi == null) {
+				return Collections.singletonList(assignPhi);
+			}
+			List<PhiInsn> list = new ArrayList<>(1 + usedInPhi.size());
+			list.add(assignPhi);
+			list.addAll(usedInPhi);
+			return list;
+		}
+		if (usedInPhi == null) {
+			return Collections.emptyList();
+		}
+		return usedInPhi;
+	}
+
 	public boolean isUsedInPhi() {
 		return usedInPhi != null && !usedInPhi.isEmpty();
 	}
@@ -173,6 +233,18 @@ public class SSAVar extends AttrNode {
 	public void setCodeVar(@NotNull CodeVar codeVar) {
 		this.codeVar = codeVar;
 		codeVar.addSsaVar(this);
+		ArgType imType = getImmutableType();
+		if (imType != null) {
+			codeVar.setType(imType);
+		}
+	}
+
+	public void resetTypeAndCodeVar() {
+		if (!isTypeImmutable()) {
+			updateType(ArgType.UNKNOWN);
+		}
+		this.typeInfo.getBounds().clear();
+		this.codeVar = null;
 	}
 
 	public boolean isCodeVarSet() {

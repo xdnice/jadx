@@ -72,11 +72,13 @@ public class NameGen {
 	}
 
 	public String assignArg(CodeVar var) {
-		String name = makeArgName(var);
 		if (fallback) {
-			return name;
+			return getFallbackName(var);
 		}
-		name = getUniqueVarName(name);
+		if (var.isThis()) {
+			return RegisterArg.THIS_ARG_NAME;
+		}
+		String name = getUniqueVarName(makeArgName(var));
 		var.setName(name);
 		return name;
 	}
@@ -118,25 +120,25 @@ public class NameGen {
 	}
 
 	private String makeArgName(CodeVar var) {
-		if (fallback) {
-			return getFallbackName(var);
-		}
-		if (var.isThis()) {
-			return RegisterArg.THIS_ARG_NAME;
-		}
 		String name = var.getName();
-		String varName = name != null ? name : guessName(var);
-		if (NameMapper.isReserved(varName)) {
-			varName = varName + 'R';
+		if (name == null) {
+			name = guessName(var);
 		}
-		if (!NameMapper.isValidAndPrintable(varName)) {
-			varName = getFallbackName(var);
+		if (!NameMapper.isValidAndPrintable(name)) {
+			name = getFallbackName(var);
 		}
-		return varName;
+		if (Consts.DEBUG) {
+			name += '_' + getFallbackName(var);
+		}
+		return name;
 	}
 
 	private String getFallbackName(CodeVar var) {
-		return getFallbackName(var.getSsaVars().get(0).getAssign());
+		List<SSAVar> ssaVars = var.getSsaVars();
+		if (ssaVars.isEmpty()) {
+			return "v";
+		}
+		return getFallbackName(ssaVars.get(0).getAssign());
 	}
 
 	private String getFallbackName(RegisterArg arg) {

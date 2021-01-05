@@ -1,28 +1,29 @@
-apply plugin: 'application'
-
-mainClassName = 'jadx.cli.JadxCLI'
-applicationName = 'jadx'
+plugins {
+	id 'application'
+}
 
 dependencies {
-    compile(project(':jadx-core'))
-    compile 'com.beust:jcommander:1.74'
-    compile 'ch.qos.logback:logback-classic:1.2.3'
+	implementation(project(':jadx-core'))
+
+	runtimeOnly(project(':jadx-plugins:jadx-dex-input'))
+	runtimeOnly(project(':jadx-plugins:jadx-smali-input'))
+	runtimeOnly(project(':jadx-plugins:jadx-java-convert'))
+
+	implementation 'com.beust:jcommander:1.80'
+	implementation 'ch.qos.logback:logback-classic:1.2.3'
+}
+
+application {
+	applicationName = 'jadx'
+	mainClassName = 'jadx.cli.JadxCLI'
+	applicationDefaultJvmArgs = ['-Xms128M', '-Xmx4g', '-XX:+UseG1GC']
 }
 
 applicationDistribution.with {
-    into('') {
-        from '../.'
-        include 'README.md'
-        include 'NOTICE'
-        include 'LICENSE'
-    }
-}
-
-startScripts {
-    defaultJvmOpts = ['-Xms128M', '-Xmx4g', '-XX:+UseG1GC']
-    doLast {
-        def str = windowsScript.text
-        str = str.replaceAll('set JAVA_EXE=%JAVA_HOME%/bin/java.exe', 'set JAVA_EXE="%JAVA_HOME%/bin/java.exe"')
-        windowsScript.text = str
-    }
+	into('') {
+		from '../.'
+		include 'README.md'
+		include 'NOTICE'
+		include 'LICENSE'
+	}
 }

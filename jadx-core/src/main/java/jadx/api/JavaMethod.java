@@ -2,13 +2,13 @@ package jadx.api;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
+import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.nodes.MethodOverrideAttr;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.utils.Utils;
 
 public final class JavaMethod implements JavaNode {
 	private final MethodNode mth;
@@ -44,27 +44,32 @@ public final class JavaMethod implements JavaNode {
 	}
 
 	public List<ArgType> getArguments() {
-		if (mth.getMethodInfo().getArgumentsTypes().isEmpty()) {
+		List<ArgType> infoArgTypes = mth.getMethodInfo().getArgumentsTypes();
+		if (infoArgTypes.isEmpty()) {
 			return Collections.emptyList();
 		}
-		List<RegisterArg> arguments = mth.getArguments(false);
-		Stream<ArgType> argTypeStream;
-		if (arguments == null || arguments.isEmpty() || mth.isNoCode()) {
-			argTypeStream = mth.getMethodInfo().getArgumentsTypes().stream();
-		} else {
-			argTypeStream = arguments.stream().map(RegisterArg::getType);
-		}
-		return argTypeStream
-				.map(type -> ArgType.tryToResolveClassAlias(mth.dex(), type))
-				.collect(Collectors.toList());
+		List<ArgType> arguments = mth.getArgTypes();
+		return Utils.collectionMap(arguments,
+				type -> ArgType.tryToResolveClassAlias(mth.root(), type));
 	}
 
 	public ArgType getReturnType() {
 		ArgType retType = mth.getReturnType();
-		if (retType == null) {
-			retType = mth.getMethodInfo().getReturnType();
+		return ArgType.tryToResolveClassAlias(mth.root(), retType);
+	}
+
+	@Override
+	public List<JavaNode> getUseIn() {
+		return getDeclaringClass().getRootDecompiler().convertNodes(mth.getUseIn());
+	}
+
+	public List<JavaNode> getOverrideRelatedMethods() {
+		MethodOverrideAttr ovrdAttr = mth.get(AType.METHOD_OVERRIDE);
+		if (ovrdAttr == null) {
+			return Collections.emptyList();
 		}
-		return ArgType.tryToResolveClassAlias(mth.dex(), retType);
+		JadxDecompiler decompiler = getDeclaringClass().getRootDecompiler();
+		return decompiler.convertNodes(ovrdAttr.getRelatedMthNodes());
 	}
 
 	public boolean isConstructor() {
@@ -75,8 +80,16 @@ public final class JavaMethod implements JavaNode {
 		return mth.getMethodInfo().isClassInit();
 	}
 
+	@Override
 	public int getDecompiledLine() {
 		return mth.getDecompiledLine();
+	}
+
+	/**
+	 * Internal API. Not Stable!
+	 */
+	public MethodNode getMethodNode() {
+		return mth;
 	}
 
 	@Override

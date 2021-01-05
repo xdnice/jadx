@@ -2,7 +2,9 @@ package jadx.gui.jobs;
 
 import java.util.concurrent.Future;
 
-import javax.swing.*;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +15,9 @@ import jadx.gui.utils.NLS;
 import jadx.gui.utils.UiUtils;
 import jadx.gui.utils.search.TextSearchIndex;
 
+/**
+ * Deprecated. Use {@link BackgroundExecutor} instead.
+ */
 public class BackgroundWorker extends SwingWorker<Void, Void> {
 	private static final Logger LOG = LoggerFactory.getLogger(BackgroundWorker.class);
 
@@ -47,6 +52,7 @@ public class BackgroundWorker extends SwingWorker<Void, Void> {
 			System.gc();
 			LOG.debug("Memory usage: Before decompile: {}", UiUtils.memoryInfo());
 			runJob(cache.getDecompileJob());
+			LOG.debug("Memory usage: After decompile: {}", UiUtils.memoryInfo());
 
 			LOG.debug("Memory usage: Before index: {}", UiUtils.memoryInfo());
 			runJob(cache.getIndexJob());
@@ -69,7 +75,7 @@ public class BackgroundWorker extends SwingWorker<Void, Void> {
 	}
 
 	private void runJob(BackgroundJob job) {
-		if (isCancelled()) {
+		if (isCancelled() || job == null) {
 			return;
 		}
 		progressPane.changeLabel(this, job.getInfoString());

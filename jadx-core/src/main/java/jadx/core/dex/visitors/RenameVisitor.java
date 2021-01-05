@@ -1,14 +1,18 @@
 package jadx.core.dex.visitors;
 
-import java.nio.file.Path;
+import java.io.File;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jadx.api.JadxArgs;
 import jadx.core.Consts;
+import jadx.core.codegen.json.JsonMappingGen;
 import jadx.core.deobf.Deobfuscator;
 import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
@@ -17,29 +21,29 @@ import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.nodes.ClassNode;
-import jadx.core.dex.nodes.DexNode;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.utils.files.InputFile;
 
 public class RenameVisitor extends AbstractVisitor {
+	private static final Logger LOG = LoggerFactory.getLogger(RenameVisitor.class);
 
 	@Override
 	public void init(RootNode root) {
-		List<DexNode> dexNodes = root.getDexNodes();
-		if (dexNodes.isEmpty()) {
+		List<File> inputFiles = root.getArgs().getInputFiles();
+		if (inputFiles.isEmpty()) {
 			return;
 		}
-		InputFile firstInputFile = dexNodes.get(0).getDexFile().getInputFile();
-		Path inputFilePath = firstInputFile.getFile().getAbsoluteFile().toPath();
+		long startTime = System.currentTimeMillis();
+		process(root);
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("Rename pass time: {}ms", System.currentTimeMillis() - startTime);
+		}
+	}
 
-		String inputName = inputFilePath.getFileName().toString();
-		String baseName = inputName.substring(0, inputName.lastIndexOf('.'));
-		Path deobfMapPath = inputFilePath.getParent().resolve(baseName + ".jobf");
-
+	private void process(RootNode root) {
+		Deobfuscator deobfuscator = new Deobfuscator(root);
 		JadxArgs args = root.getArgs();
-		Deobfuscator deobfuscator = new Deobfuscator(args, dexNodes, deobfMapPath);
 		if (args.isDeobfuscationOn()) {
 			deobfuscator.execute();
 		}
@@ -49,6 +53,9 @@ public class RenameVisitor extends AbstractVisitor {
 		if (args.isDeobfuscationOn()) {
 			deobfuscator.savePresets();
 			deobfuscator.clear();
+		}
+		if (args.isJsonOutput()) {
+			JsonMappingGen.dump(root);
 		}
 	}
 
@@ -90,24 +97,36 @@ public class RenameVisitor extends AbstractVisitor {
 			classInfo.changeShortName(newShortName);
 			cls.addAttr(new RenameReasonAttr(cls).append("invalid class name"));
 		}
-		if (args.isRenameValid()) {
-			if (classInfo.isInner()) {
-				ClassInfo parentClass = classInfo.getParentClass();
-				while (parentClass != null) {
-					if (parentClass.getAliasShortName().equals(clsName)) {
-						String clsAlias = deobfuscator.getClsAlias(cls);
-						classInfo.changeShortName(clsAlias);
-						cls.addAttr(new RenameReasonAttr(cls).append("collision with other inner class name"));
-						break;
-					}
-					parentClass = parentClass.getParentClass();
+		if (classInfo.isInner() && args.isRenameValid()) {
+			// check inner classes names
+			ClassInfo parentClass = classInfo.getParentClass();
+			while (parentClass != null) {
+				if (parentClass.getAliasShortName().equals(clsName)) {
+					String clsAlias = deobfuscator.getClsAlias(cls);
+					classInfo.changeShortName(clsAlias);
+					cls.addAttr(new RenameReasonAttr(cls).append("collision with other inner class name"));
+					break;
 				}
-			} else {
-				if (classInfo.getAliasPkg().isEmpty()) {
-					classInfo.changePkg(Consts.DEFAULT_PACKAGE_NAME);
-					cls.addAttr(new RenameReasonAttr(cls).append("default package"));
-				}
+				parentClass = parentClass.getParentClass();
 			}
+		}
+		checkPackage(deobfuscator, cls, classInfo, args);
+	}
+
+	private static void checkPackage(Deobfuscator deobfuscator, ClassNode cls, ClassInfo classInfo, JadxArgs args) {
+		if (classInfo.isInner()) {
+			return;
+		}
+		String aliasPkg = classInfo.getAliasPkg();
+		if (args.isRenameValid() && aliasPkg.isEmpty()) {
+			classInfo.changePkg(Consts.DEFAULT_PACKAGE_NAME);
+			cls.addAttr(new RenameReasonAttr(cls).append("default package"));
+			return;
+		}
+		String fullPkgAlias = deobfuscator.getPkgAlias(cls);
+		if (!fullPkgAlias.equals(aliasPkg)) {
+			classInfo.changePkg(fullPkgAlias);
+			cls.addAttr(new RenameReasonAttr(cls).append("invalid package"));
 		}
 	}
 
@@ -152,7 +171,14 @@ public class RenameVisitor extends AbstractVisitor {
 	}
 
 	private static void checkMethods(Deobfuscator deobfuscator, ClassNode cls, JadxArgs args) {
-		for (MethodNode mth : cls.getMethods()) {
+		List<MethodNode> methods = new ArrayList<>(cls.getMethods().size());
+		for (MethodNode method : cls.getMethods()) {
+			if (!method.getAccessFlags().isConstructor()) {
+				methods.add(method);
+			}
+		}
+
+		for (MethodNode mth : methods) {
 			String alias = mth.getAlias();
 
 			boolean notValid = args.isRenameValid() && !NameMapper.isValidIdentifier(alias);
@@ -162,19 +188,20 @@ public class RenameVisitor extends AbstractVisitor {
 				mth.addAttr(new RenameReasonAttr(mth, notValid, notPrintable));
 			}
 		}
-		Set<String> names = new HashSet<>();
-		for (MethodNode mth : cls.getMethods()) {
-			AccessInfo accessFlags = mth.getAccessFlags();
-			if (accessFlags.isConstructor()
-					|| accessFlags.isBridge()
-					|| accessFlags.isSynthetic()
-					|| mth.contains(AFlag.DONT_GENERATE) /* this flag not set yet */) {
-				continue;
-			}
-			String signature = mth.getMethodInfo().makeSignature(true, false);
-			if (!names.add(signature)) {
-				deobfuscator.forceRenameMethod(mth);
-				mth.addAttr(new RenameReasonAttr("collision with other method in class"));
+		// Rename methods with same signature
+		if (args.isRenameValid()) {
+			Set<String> names = new HashSet<>(methods.size());
+			for (MethodNode mth : methods) {
+				AccessInfo accessFlags = mth.getAccessFlags();
+				if (accessFlags.isBridge() || accessFlags.isSynthetic()
+						|| mth.contains(AFlag.DONT_GENERATE) /* this flag not set yet */) {
+					continue;
+				}
+				String signature = mth.getMethodInfo().makeSignature(true, false);
+				if (!names.add(signature)) {
+					deobfuscator.forceRenameMethod(mth);
+					mth.addAttr(new RenameReasonAttr("collision with other method in class"));
+				}
 			}
 		}
 	}

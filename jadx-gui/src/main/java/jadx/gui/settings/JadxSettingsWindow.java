@@ -1,6 +1,9 @@
 package jadx.gui.settings;
 
 import java.awt.*;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -12,6 +15,9 @@ import javax.swing.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+
 import say.swing.JFontChooser;
 
 import jadx.api.JadxArgs;
@@ -20,6 +26,7 @@ import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
 import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
+import jadx.gui.utils.UiUtils;
 
 public class JadxSettingsWindow extends JDialog {
 	private static final long serialVersionUID = -1804570470377354148L;
@@ -46,19 +53,29 @@ public class JadxSettingsWindow extends JDialog {
 		setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 		setModalityType(ModalityType.APPLICATION_MODAL);
 		pack();
+		UiUtils.setWindowIcons(this);
 		setLocationRelativeTo(null);
 	}
 
 	private void initUI() {
 		JPanel panel = new JPanel();
-		panel.setLayout(new BoxLayout(panel, BoxLayout.PAGE_AXIS));
+		panel.setLayout(new BoxLayout(panel, BoxLayout.LINE_AXIS));
 		panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-		panel.add(makeDeobfuscationGroup());
-		panel.add(makeRenameGroup());
-		panel.add(makeDecompilationGroup());
-		panel.add(makeProjectGroup());
-		panel.add(makeEditorGroup());
-		panel.add(makeOtherGroup());
+
+		JPanel leftPanel = new JPanel();
+		JPanel rightPanel = new JPanel();
+		leftPanel.setLayout(new BoxLayout(leftPanel, BoxLayout.PAGE_AXIS));
+		rightPanel.setLayout(new BoxLayout(rightPanel, BoxLayout.PAGE_AXIS));
+		panel.add(leftPanel);
+		panel.add(rightPanel);
+
+		leftPanel.add(makeDeobfuscationGroup());
+		leftPanel.add(makeRenameGroup());
+		leftPanel.add(makeProjectGroup());
+		leftPanel.add(makeEditorGroup());
+		leftPanel.add(makeOtherGroup());
+
+		rightPanel.add(makeDecompilationGroup());
 
 		JButton saveBtn = new JButton(NLS.str("preferences.save"));
 		saveBtn.addActionListener(event -> {
@@ -80,11 +97,7 @@ public class JadxSettingsWindow extends JDialog {
 			});
 		});
 		JButton cancelButton = new JButton(NLS.str("preferences.cancel"));
-		cancelButton.addActionListener(event -> {
-			JadxSettingsAdapter.fill(settings, startSettings);
-			mainWindow.loadSettings();
-			dispose();
-		});
+		cancelButton.addActionListener(event -> cancel());
 
 		JButton resetBtn = new JButton(NLS.str("preferences.reset"));
 		resetBtn.addActionListener(event -> {
@@ -105,10 +118,31 @@ public class JadxSettingsWindow extends JDialog {
 			}
 		});
 
+		JButton copyBtn = new JButton(NLS.str("preferences.copy"));
+		copyBtn.addActionListener(event -> {
+
+			JsonObject settingsJson = JadxSettingsAdapter.makeJsonObject(this.settings);
+			// remove irrelevant preferences
+			settingsJson.remove("windowPos");
+			settingsJson.remove("mainWindowExtendedState");
+			settingsJson.remove("lastSaveProjectPath");
+			settingsJson.remove("lastOpenFilePath");
+			settingsJson.remove("lastSaveFilePath");
+			settingsJson.remove("recentProjects");
+			String settingsText = new GsonBuilder().setPrettyPrinting().create().toJson(settingsJson);
+			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			StringSelection selection = new StringSelection(settingsText);
+			clipboard.setContents(selection, selection);
+			JOptionPane.showMessageDialog(
+					JadxSettingsWindow.this,
+					NLS.str("preferences.copy_message"));
+		});
+
 		JPanel buttonPane = new JPanel();
 		buttonPane.setLayout(new BoxLayout(buttonPane, BoxLayout.LINE_AXIS));
-		buttonPane.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
+		buttonPane.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 		buttonPane.add(resetBtn);
+		buttonPane.add(copyBtn);
 		buttonPane.add(Box.createHorizontalGlue());
 		buttonPane.add(saveBtn);
 		buttonPane.add(Box.createRigidArea(new Dimension(10, 0)));
@@ -116,10 +150,27 @@ public class JadxSettingsWindow extends JDialog {
 
 		Container contentPane = getContentPane();
 		JScrollPane scrollPane = new JScrollPane(panel);
+		scrollPane.getVerticalScrollBar().setUnitIncrement(16);
 		scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
 		contentPane.add(scrollPane, BorderLayout.CENTER);
 		contentPane.add(buttonPane, BorderLayout.PAGE_END);
 		getRootPane().setDefaultButton(saveBtn);
+
+		KeyStroke strokeEsc = KeyStroke.getKeyStroke("ESCAPE");
+		InputMap inputMap = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+		inputMap.put(strokeEsc, "ESCAPE");
+		getRootPane().getActionMap().put("ESCAPE", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				cancel();
+			}
+		});
+	}
+
+	private void cancel() {
+		JadxSettingsAdapter.fill(settings, startSettings);
+		mainWindow.loadSettings();
+		dispose();
 	}
 
 	private static void enableComponents(Container container, boolean enable) {
@@ -167,15 +218,24 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JCheckBox deobfKotlinMetadata = new JCheckBox();
+		deobfKotlinMetadata.setSelected(settings.isDeobfuscationParseKotlinMetadata());
+		deobfKotlinMetadata.addItemListener(e -> {
+			settings.setDeobfuscationParseKotlinMetadata(e.getStateChange() == ItemEvent.SELECTED);
+			needReload();
+		});
+
 		SettingsGroup deobfGroup = new SettingsGroup(NLS.str("preferences.deobfuscation"));
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_on"), deobfOn);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_force"), deobfForce);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_min_len"), minLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_max_len"), maxLenSpinner);
 		deobfGroup.addRow(NLS.str("preferences.deobfuscation_source_alias"), deobfSourceAlias);
+		deobfGroup.addRow(NLS.str("preferences.deobfuscation_kotlin_metadata"), deobfKotlinMetadata);
 		deobfGroup.end();
 
-		Collection<JComponent> connectedComponents = Arrays.asList(deobfForce, minLenSpinner, maxLenSpinner, deobfSourceAlias);
+		Collection<JComponent> connectedComponents =
+				Arrays.asList(deobfForce, minLenSpinner, maxLenSpinner, deobfSourceAlias, deobfKotlinMetadata);
 		deobfOn.addItemListener(e -> enableComponentList(connectedComponents, e.getStateChange() == ItemEvent.SELECTED));
 		enableComponentList(connectedComponents, settings.isDeobfuscationOn());
 		return deobfGroup;

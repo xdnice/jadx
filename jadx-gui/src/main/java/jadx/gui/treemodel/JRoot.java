@@ -1,6 +1,7 @@
 package jadx.gui.treemodel;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
@@ -25,7 +26,6 @@ public class JRoot extends JNode {
 
 	public JRoot(JadxWrapper wrapper) {
 		this.wrapper = wrapper;
-		update();
 	}
 
 	public final void update() {
@@ -42,11 +42,6 @@ public class JRoot extends JNode {
 		if (signature != null) {
 			add(signature);
 		}
-
-		JCertificate certificate = getCertificate(wrapper.getResources());
-		if (certificate != null) {
-			add(certificate);
-		}
 	}
 
 	private List<JResource> getHierarchyResources(List<ResourceFile> resources) {
@@ -58,9 +53,9 @@ public class JRoot extends JNode {
 		for (ResourceFile rf : resources) {
 			String rfName;
 			if (rf.getZipRef() != null) {
-				rfName = rf.getName();
+				rfName = rf.getDeobfName();
 			} else {
-				rfName = new File(rf.getName()).getName();
+				rfName = new File(rf.getDeobfName()).getName();
 			}
 			String[] parts = new File(rfName).getPath().split(splitPathStr);
 			JResource curRf = root;
@@ -80,22 +75,6 @@ public class JRoot extends JNode {
 			}
 		}
 		return Collections.singletonList(root);
-	}
-
-	private JCertificate getCertificate(List<ResourceFile> resources) {
-		if (resources.isEmpty()) {
-			return null;
-		}
-		for (ResourceFile rf : resources) {
-
-			if (rf.getZipRef() != null) {
-				String rfName = rf.getName().toUpperCase();
-				if (rfName.endsWith(".DSA") || rfName.endsWith(".RSA")) {
-					return new JCertificate(rf);
-				}
-			}
-		}
-		return null;
 	}
 
 	private JResource getResourceByName(JResource rf, String name) {
@@ -146,7 +125,14 @@ public class JRoot extends JNode {
 
 	@Override
 	public String makeString() {
-		File file = wrapper.getOpenFile();
-		return file != null ? file.getName() : "File not open";
+		List<Path> paths = wrapper.getOpenPaths();
+		int count = paths.size();
+		if (count == 0) {
+			return "File not open";
+		}
+		if (count == 1) {
+			return paths.get(0).getFileName().toString();
+		}
+		return count + " files";
 	}
 }

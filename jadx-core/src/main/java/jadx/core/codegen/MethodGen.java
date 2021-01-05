@@ -1,19 +1,26 @@
 package jadx.core.codegen;
 
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.android.dx.rop.code.AccessFlags;
-
+import jadx.api.plugins.input.data.AccessFlags;
+import jadx.api.plugins.input.data.annotations.EncodedValue;
 import jadx.core.Consts;
+import jadx.core.Jadx;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.annotations.MethodParameters;
+import jadx.core.dex.attributes.nodes.JadxError;
 import jadx.core.dex.attributes.nodes.JumpInfo;
+import jadx.core.dex.attributes.nodes.MethodOverrideAttr;
 import jadx.core.dex.info.AccessInfo;
+import jadx.core.dex.instructions.ConstStringNode;
 import jadx.core.dex.instructions.IfNode;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.ArgType;
@@ -24,13 +31,17 @@ import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.trycatch.CatchAttr;
 import jadx.core.dex.visitors.DepthTraversal;
-import jadx.core.dex.visitors.FallbackModeVisitor;
+import jadx.core.dex.visitors.IDexTreeVisitor;
 import jadx.core.utils.CodeGenUtils;
 import jadx.core.utils.InsnUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.CodegenException;
 import jadx.core.utils.exceptions.DecodeException;
 import jadx.core.utils.exceptions.JadxOverflowException;
+
+import static jadx.core.codegen.MethodGen.FallbackOption.BLOCK_DUMP;
+import static jadx.core.codegen.MethodGen.FallbackOption.COMMENTED_DUMP;
+import static jadx.core.codegen.MethodGen.FallbackOption.FALLBACK_MODE;
 
 public class MethodGen {
 	private static final Logger LOG = LoggerFactory.getLogger(MethodGen.class);
@@ -71,30 +82,42 @@ public class MethodGen {
 			code.attachDefinition(mth);
 			return false;
 		}
+		if (Consts.DEBUG_USAGE) {
+			ClassGen.addMthUsageInfo(code, mth);
+		}
+		addOverrideAnnotation(code, mth);
 		annotationGen.addForMethod(code, mth);
 
 		AccessInfo clsAccFlags = mth.getParentClass().getAccessFlags();
 		AccessInfo ai = mth.getAccessFlags();
 		// don't add 'abstract' and 'public' to methods in interface
 		if (clsAccFlags.isInterface()) {
-			ai = ai.remove(AccessFlags.ACC_ABSTRACT);
-			ai = ai.remove(AccessFlags.ACC_PUBLIC);
+			ai = ai.remove(AccessFlags.ABSTRACT);
+			ai = ai.remove(AccessFlags.PUBLIC);
 		}
 		// don't add 'public' for annotations
 		if (clsAccFlags.isAnnotation()) {
-			ai = ai.remove(AccessFlags.ACC_PUBLIC);
+			ai = ai.remove(AccessFlags.PUBLIC);
 		}
 
-		if (mth.getMethodInfo().isRenamed() && !ai.isConstructor()) {
+		if (mth.getMethodInfo().hasAlias() && !ai.isConstructor()) {
 			CodeGenUtils.addRenamedComment(code, mth, mth.getName());
 		}
+		if (mth.contains(AFlag.INCONSISTENT_CODE)) {
+			code.startLine("/* Code decompiled incorrectly, please refer to instructions dump. */");
+		}
+
 		code.startLineWithNum(mth.getSourceLine());
 		code.add(ai.makeString());
 		if (Consts.DEBUG) {
 			code.add(mth.isVirtual() ? "/* virtual */ " : "/* direct */ ");
 		}
+		if (clsAccFlags.isInterface() && !mth.isNoCode() && !mth.getAccessFlags().isStatic()) {
+			// add 'default' for method with code in interface
+			code.add("default ");
+		}
 
-		if (classGen.addGenericMap(code, mth.getGenericMap(), false)) {
+		if (classGen.addGenericTypeParameters(code, mth.getTypeParameters(), false)) {
 			code.add(' ');
 		}
 		if (ai.isConstructor()) {
@@ -108,11 +131,11 @@ public class MethodGen {
 		}
 		code.add('(');
 
-		List<RegisterArg> args = mth.getArguments(false);
+		List<RegisterArg> args = mth.getArgRegs();
 		if (mth.getMethodInfo().isConstructor()
 				&& mth.getParentClass().contains(AType.ENUM_CLASS)) {
 			if (args.size() == 2) {
-				args.clear();
+				args = Collections.emptyList();
 			} else if (args.size() > 2) {
 				args = args.subList(2, args.size());
 			} else {
@@ -125,7 +148,32 @@ public class MethodGen {
 		code.add(')');
 
 		annotationGen.addThrows(mth, code);
+
+		// add default value if in annotation class
+		if (mth.getParentClass().getAccessFlags().isAnnotation()) {
+			EncodedValue def = annotationGen.getAnnotationDefaultValue(mth.getName());
+			if (def != null) {
+				code.add(" default ");
+				annotationGen.encodeValue(mth.root(), code, def);
+			}
+		}
 		return true;
+	}
+
+	private void addOverrideAnnotation(CodeWriter code, MethodNode mth) {
+		MethodOverrideAttr overrideAttr = mth.get(AType.METHOD_OVERRIDE);
+		if (overrideAttr == null) {
+			return;
+		}
+		if (!overrideAttr.isAtBaseMth()) {
+			code.startLine("@Override");
+			code.add(" // ");
+			code.add(Utils.listToString(overrideAttr.getOverrideList(), ", ", md -> md.getMethodInfo().getDeclClass().getAliasFullName()));
+		}
+		if (Consts.DEBUG) {
+			code.startLine("// related by override: ");
+			code.add(Utils.listToString(overrideAttr.getRelatedMthNodes(), ", ", m -> m.getParentClass().getFullName()));
+		}
 	}
 
 	private void addMethodArguments(CodeWriter code, List<RegisterArg> args) {
@@ -138,7 +186,7 @@ public class MethodGen {
 			CodeVar var;
 			if (ssaVar == null) {
 				// null for abstract or interface methods
-				var = CodeVar.fromMthArg(mthArg);
+				var = CodeVar.fromMthArg(mthArg, classGen.isFallbackMode());
 			} else {
 				var = ssaVar.getCodeVar();
 			}
@@ -151,11 +199,12 @@ public class MethodGen {
 				code.add("final ");
 			}
 			ArgType argType;
-			if (var.getType() == ArgType.UNKNOWN) {
+			ArgType varType = var.getType();
+			if (varType == null || varType == ArgType.UNKNOWN) {
 				// occur on decompilation errors
 				argType = mthArg.getInitType();
 			} else {
-				argType = var.getType();
+				argType = varType;
 			}
 			if (!it.hasNext() && mth.getAccessFlags().isVarArgs()) {
 				// change last array argument to varargs
@@ -181,75 +230,107 @@ public class MethodGen {
 	}
 
 	public void addInstructions(CodeWriter code) throws CodegenException {
-		if (mth.contains(AType.JADX_ERROR)
-				|| mth.contains(AFlag.INCONSISTENT_CODE)
-				|| mth.getRegion() == null) {
-			code.startLine("/*");
-			addFallbackMethodCode(code);
-			code.startLine("*/");
-
-			code.startLine("throw new UnsupportedOperationException(\"Method not decompiled: ")
-					.add(mth.getParentClass().getClassInfo().getAliasFullName())
-					.add('.')
-					.add(mth.getAlias())
-					.add('(')
-					.add(Utils.listToString(mth.getMethodInfo().getArgumentsTypes()))
-					.add("):")
-					.add(mth.getMethodInfo().getReturnType().toString())
-					.add("\");");
+		if (mth.root().getArgs().isFallbackMode()) {
+			addFallbackMethodCode(code, FALLBACK_MODE);
+		} else if (classGen.isFallbackMode()) {
+			dumpInstructions(code);
 		} else {
-			try {
-				RegionGen regionGen = new RegionGen(this);
-				regionGen.makeRegion(code, mth.getRegion());
-			} catch (StackOverflowError | BootstrapMethodError e) {
-				mth.addError("Method code generation error", new JadxOverflowException("StackOverflow"));
-				classGen.insertDecompilationProblems(code, mth);
-				addInstructions(code);
-			} catch (Exception e) {
-				if (mth.getParentClass().getTopParentClass().contains(AFlag.RESTART_CODEGEN)) {
-					throw e;
-				}
-				mth.addError("Method code generation error", e);
-				classGen.insertDecompilationProblems(code, mth);
-				addInstructions(code);
-			}
+			addRegionInsns(code);
 		}
 	}
 
-	public void addFallbackMethodCode(CodeWriter code) {
-		if (mth.getInstructions() == null) {
-			// load original instructions
-			try {
-				mth.unload();
-				mth.load();
-				DepthTraversal.visit(new FallbackModeVisitor(), mth);
-			} catch (DecodeException e) {
-				LOG.error("Error reload instructions in fallback mode:", e);
-				code.startLine("// Can't load method instructions: " + e.getMessage());
-				return;
+	public void addRegionInsns(CodeWriter code) throws CodegenException {
+		try {
+			RegionGen regionGen = new RegionGen(this);
+			regionGen.makeRegion(code, mth.getRegion());
+		} catch (StackOverflowError | BootstrapMethodError e) {
+			mth.addError("Method code generation error", new JadxOverflowException("StackOverflow"));
+			classGen.insertDecompilationProblems(code, mth);
+			dumpInstructions(code);
+		} catch (Exception e) {
+			if (mth.getParentClass().getTopParentClass().contains(AFlag.RESTART_CODEGEN)) {
+				throw e;
 			}
+			mth.addError("Method code generation error", e);
+			classGen.insertDecompilationProblems(code, mth);
+			dumpInstructions(code);
+		}
+	}
+
+	public void dumpInstructions(CodeWriter code) {
+		code.startLine("/*");
+		addFallbackMethodCode(code, COMMENTED_DUMP);
+		code.startLine("*/");
+
+		code.startLine("throw new UnsupportedOperationException(\"Method not decompiled: ")
+				.add(mth.getParentClass().getClassInfo().getAliasFullName())
+				.add('.')
+				.add(mth.getAlias())
+				.add('(')
+				.add(Utils.listToString(mth.getMethodInfo().getArgumentsTypes()))
+				.add("):")
+				.add(mth.getMethodInfo().getReturnType().toString())
+				.add("\");");
+	}
+
+	public void addFallbackMethodCode(CodeWriter code, FallbackOption fallbackOption) {
+		// load original instructions
+		try {
+			mth.unload();
+			mth.load();
+			for (IDexTreeVisitor visitor : Jadx.getFallbackPassesList()) {
+				DepthTraversal.visit(visitor, mth);
+			}
+		} catch (DecodeException e) {
+			LOG.error("Error reload instructions in fallback mode:", e);
+			code.startLine("// Can't load method instructions: " + e.getMessage());
+			return;
 		}
 		InsnNode[] insnArr = mth.getInstructions();
 		if (insnArr == null) {
 			code.startLine("// Can't load method instructions.");
 			return;
 		}
+		if (fallbackOption == COMMENTED_DUMP) {
+			long insnCountEstimate = Stream.of(insnArr)
+					.filter(Objects::nonNull)
+					.filter(insn -> insn.getType() != InsnType.NOP)
+					.count();
+			if (insnCountEstimate > 100) {
+				code.startLine("// Method dump skipped, instructions count: " + insnArr.length);
+				return;
+			}
+		}
 		code.incIndent();
 		if (mth.getThisArg() != null) {
 			code.startLine(nameGen.useArg(mth.getThisArg())).add(" = this;");
 		}
-		addFallbackInsns(code, mth, insnArr, true);
+		addFallbackInsns(code, mth, insnArr, fallbackOption);
 		code.decIndent();
 	}
 
-	public static void addFallbackInsns(CodeWriter code, MethodNode mth, InsnNode[] insnArr, boolean addLabels) {
+	public enum FallbackOption {
+		FALLBACK_MODE,
+		BLOCK_DUMP,
+		COMMENTED_DUMP
+	}
+
+	public static void addFallbackInsns(CodeWriter code, MethodNode mth, InsnNode[] insnArr, FallbackOption option) {
+		int startIndent = code.getIndent();
 		InsnGen insnGen = new InsnGen(getFallbackMethodGen(mth), true);
+		boolean attachInsns = mth.root().getArgs().isJsonOutput();
 		InsnNode prevInsn = null;
 		for (InsnNode insn : insnArr) {
 			if (insn == null) {
 				continue;
 			}
-			if (addLabels && needLabel(insn, prevInsn)) {
+			if (insn.contains(AType.JADX_ERROR)) {
+				for (JadxError error : insn.getAll(AType.JADX_ERROR)) {
+					code.startLine("// ").add(error.getError());
+				}
+				continue;
+			}
+			if (option != BLOCK_DUMP && needLabel(insn, prevInsn)) {
 				code.decIndent();
 				code.startLine(getLabelName(insn.getOffset()) + ':');
 				code.incIndent();
@@ -258,7 +339,17 @@ public class MethodGen {
 				continue;
 			}
 			try {
-				code.startLine();
+				boolean escapeComment = isCommentEscapeNeeded(insn, option);
+				if (escapeComment) {
+					code.decIndent();
+					code.startLine("*/");
+					code.startLine("//  ");
+				} else {
+					code.startLine();
+				}
+				if (attachInsns) {
+					code.attachLineAnnotation(insn);
+				}
 				RegisterArg resArg = insn.getResult();
 				if (resArg != null) {
 					ArgType varType = resArg.getInitType();
@@ -267,16 +358,32 @@ public class MethodGen {
 					}
 				}
 				insnGen.makeInsn(insn, code, InsnGen.Flags.INLINE);
+				if (escapeComment) {
+					code.startLine("/*");
+					code.incIndent();
+				}
+
 				CatchAttr catchAttr = insn.get(AType.CATCH_BLOCK);
 				if (catchAttr != null) {
 					code.add("     // " + catchAttr);
 				}
-			} catch (CodegenException e) {
+			} catch (Exception e) {
 				LOG.debug("Error generate fallback instruction: ", e.getCause());
+				code.setIndent(startIndent);
 				code.startLine("// error: " + insn);
 			}
 			prevInsn = insn;
 		}
+	}
+
+	private static boolean isCommentEscapeNeeded(InsnNode insn, FallbackOption option) {
+		if (option == COMMENTED_DUMP) {
+			if (insn.getType() == InsnType.CONST_STR) {
+				String str = ((ConstStringNode) insn).getString();
+				return str.contains("*/");
+			}
+		}
+		return false;
 	}
 
 	private static boolean needLabel(InsnNode insn, InsnNode prevInsn) {
@@ -304,7 +411,7 @@ public class MethodGen {
 	 * Return fallback variant of method codegen
 	 */
 	public static MethodGen getFallbackMethodGen(MethodNode mth) {
-		ClassGen clsGen = new ClassGen(mth.getParentClass(), null, true, true, true);
+		ClassGen clsGen = new ClassGen(mth.getParentClass(), null, false, true, true);
 		return new MethodGen(clsGen, mth);
 	}
 

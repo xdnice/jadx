@@ -2,8 +2,7 @@ package jadx.core.dex.instructions;
 
 import java.util.List;
 
-import com.android.dx.io.instructions.DecodedInstruction;
-
+import jadx.api.plugins.input.insns.InsnData;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
@@ -21,12 +20,12 @@ public class IfNode extends GotoNode {
 	private BlockNode thenBlock;
 	private BlockNode elseBlock;
 
-	public IfNode(DecodedInstruction insn, IfOp op) {
+	public IfNode(InsnData insn, IfOp op) {
 		super(InsnType.IF, insn.getTarget(), 2);
 		this.op = op;
 		ArgType argType = narrowTypeByOp(op);
 		addArg(InsnArg.reg(insn, 0, argType));
-		if (insn.getRegisterCount() == 1) {
+		if (insn.getRegsCount() == 1) {
 			addArg(InsnArg.lit(0, argType));
 		} else {
 			addArg(InsnArg.reg(insn, 1, argType));
@@ -34,10 +33,14 @@ public class IfNode extends GotoNode {
 	}
 
 	public IfNode(IfOp op, int targetOffset, InsnArg arg1, InsnArg arg2) {
-		super(InsnType.IF, targetOffset, 2);
-		this.op = op;
+		this(op, targetOffset);
 		addArg(arg1);
 		addArg(arg2);
+	}
+
+	private IfNode(IfOp op, int targetOffset) {
+		super(InsnType.IF, targetOffset, 2);
+		this.op = op;
 	}
 
 	// change default types priority
@@ -121,6 +124,14 @@ public class IfNode extends GotoNode {
 		}
 		IfNode other = (IfNode) obj;
 		return op == other.op;
+	}
+
+	@Override
+	public InsnNode copy() {
+		IfNode copy = new IfNode(op, target);
+		copy.thenBlock = thenBlock;
+		copy.elseBlock = elseBlock;
+		return copyCommonParams(copy);
 	}
 
 	@Override

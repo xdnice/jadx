@@ -7,7 +7,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -16,12 +15,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.ResourceFile.ZipRef;
+import jadx.api.impl.SimpleCodeInfo;
+import jadx.api.plugins.utils.ZipSecurity;
 import jadx.core.codegen.CodeWriter;
 import jadx.core.utils.Utils;
 import jadx.core.utils.android.Res9patchStreamDecoder;
 import jadx.core.utils.exceptions.JadxException;
-import jadx.core.utils.files.InputFile;
-import jadx.core.utils.files.ZipSecurity;
+import jadx.core.utils.files.FileUtils;
 import jadx.core.xmlgen.ResContainer;
 import jadx.core.xmlgen.ResTableParser;
 
@@ -38,10 +38,11 @@ public final class ResourcesLoader {
 		this.jadxRef = jadxRef;
 	}
 
-	List<ResourceFile> load(List<InputFile> inputFiles) {
+	List<ResourceFile> load() {
+		List<File> inputFiles = jadxRef.getArgs().getInputFiles();
 		List<ResourceFile> list = new ArrayList<>(inputFiles.size());
-		for (InputFile file : inputFiles) {
-			loadFile(list, file.getFile());
+		for (File file : inputFiles) {
+			loadFile(list, file);
 		}
 		return list;
 	}
@@ -54,7 +55,7 @@ public final class ResourcesLoader {
 		try {
 			ZipRef zipRef = rf.getZipRef();
 			if (zipRef == null) {
-				File file = new File(rf.getName());
+				File file = new File(rf.getOriginalName());
 				try (InputStream inputStream = new BufferedInputStream(new FileInputStream(file))) {
 					return decoder.decode(file.length(), inputStream);
 				}
@@ -67,13 +68,13 @@ public final class ResourcesLoader {
 					if (!ZipSecurity.isValidZipEntry(entry)) {
 						return null;
 					}
-					try (InputStream inputStream = new BufferedInputStream(zipFile.getInputStream(entry))) {
+					try (InputStream inputStream = ZipSecurity.getInputStreamForEntry(zipFile, entry)) {
 						return decoder.decode(entry.getSize(), inputStream);
 					}
 				}
 			}
 		} catch (Exception e) {
-			throw new JadxException("Error decode: " + rf.getName(), e);
+			throw new JadxException("Error decode: " + rf.getDeobfName(), e);
 		}
 	}
 
@@ -85,7 +86,7 @@ public final class ResourcesLoader {
 			CodeWriter cw = new CodeWriter();
 			cw.add("Error decode ").add(rf.getType().toString().toLowerCase());
 			Utils.appendStackTrace(cw, e.getCause());
-			return ResContainer.textResource(rf.getName(), cw);
+			return ResContainer.textResource(rf.getDeobfName(), cw.finish());
 		}
 	}
 
@@ -94,8 +95,8 @@ public final class ResourcesLoader {
 		switch (rf.getType()) {
 			case MANIFEST:
 			case XML:
-				CodeWriter content = jadxRef.getXmlParser().parse(inputStream);
-				return ResContainer.textResource(rf.getName(), content);
+				ICodeInfo content = jadxRef.getXmlParser().parse(inputStream);
+				return ResContainer.textResource(rf.getDeobfName(), content);
 
 			case ARSC:
 				return new ResTableParser(jadxRef.getRoot()).decodeFiles(inputStream);
@@ -109,13 +110,12 @@ public final class ResourcesLoader {
 	}
 
 	private static ResContainer decodeImage(ResourceFile rf, InputStream inputStream) {
-		String name = rf.getName();
+		String name = rf.getOriginalName();
 		if (name.endsWith(".9.png")) {
-			Res9patchStreamDecoder decoder = new Res9patchStreamDecoder();
-			ByteArrayOutputStream os = new ByteArrayOutputStream();
-			try {
+			try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
+				Res9patchStreamDecoder decoder = new Res9patchStreamDecoder();
 				decoder.decode(inputStream, os);
-				return ResContainer.decodedData(rf.getName(), os.toByteArray());
+				return ResContainer.decodedData(rf.getDeobfName(), os.toByteArray());
 			} catch (Exception e) {
 				LOG.error("Failed to decode 9-patch png image, path: {}", name, e);
 			}
@@ -127,16 +127,12 @@ public final class ResourcesLoader {
 		if (file == null) {
 			return;
 		}
-		try (ZipFile zip = new ZipFile(file)) {
-			Enumeration<? extends ZipEntry> entries = zip.entries();
-			while (entries.hasMoreElements()) {
-				ZipEntry entry = entries.nextElement();
-				if (ZipSecurity.isValidZipEntry(entry)) {
-					addEntry(list, file, entry);
-				}
-			}
-		} catch (Exception e) {
-			LOG.debug("Not a zip file: {}", file.getAbsolutePath());
+		if (FileUtils.isZipFile(file)) {
+			ZipSecurity.visitZipEntries(file, (zipFile, entry) -> {
+				addEntry(list, file, entry);
+				return null;
+			});
+		} else {
 			addResourceFile(list, file);
 		}
 	}
@@ -163,11 +159,9 @@ public final class ResourcesLoader {
 		}
 	}
 
-	public static CodeWriter loadToCodeWriter(InputStream is) throws IOException {
-		CodeWriter cw = new CodeWriter();
+	public static ICodeInfo loadToCodeWriter(InputStream is) throws IOException {
 		ByteArrayOutputStream baos = new ByteArrayOutputStream(READ_BUFFER_SIZE);
 		copyStream(is, baos);
-		cw.add(baos.toString("UTF-8"));
-		return cw;
+		return new SimpleCodeInfo(baos.toString("UTF-8"));
 	}
 }

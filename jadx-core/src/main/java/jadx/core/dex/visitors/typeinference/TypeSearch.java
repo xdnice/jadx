@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.Consts;
+import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.PrimitiveType;
@@ -20,7 +21,6 @@ import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
-import jadx.core.utils.exceptions.JadxRuntimeException;
 
 /**
  * Slow and memory consuming multi-variable type search algorithm.
@@ -34,6 +34,7 @@ import jadx.core.utils.exceptions.JadxRuntimeException;
 public class TypeSearch {
 	private static final Logger LOG = LoggerFactory.getLogger(TypeSearch.class);
 
+	private static final int VARS_PROCESS_LIMIT = 5_000;
 	private static final int CANDIDATES_COUNT_LIMIT = 10;
 	private static final int SEARCH_ITERATION_LIMIT = 1_000_000;
 
@@ -46,10 +47,15 @@ public class TypeSearch {
 		this.mth = mth;
 		this.state = new TypeSearchState(mth);
 		this.typeUpdate = mth.root().getTypeUpdate();
-		this.typeCompare = typeUpdate.getComparator();
+		this.typeCompare = typeUpdate.getTypeCompare();
 	}
 
 	public boolean run() {
+		if (mth.getSVars().size() > VARS_PROCESS_LIMIT) {
+			mth.addWarnComment("Multi-variable search skipped. Vars limit reached: " + mth.getSVars().size()
+					+ " (expected less than " + VARS_PROCESS_LIMIT + ")");
+			return false;
+		}
 		mth.getSVars().forEach(this::fillTypeCandidates);
 		mth.getSVars().forEach(this::collectConstraints);
 
@@ -63,41 +69,47 @@ public class TypeSearch {
 		} else {
 			search(vars);
 			searchSuccess = fullCheck(vars);
-			if (Consts.DEBUG && !searchSuccess) {
-				LOG.warn("Multi-variable search failed in {}", mth);
+			if (Consts.DEBUG_TYPE_INFERENCE && !searchSuccess) {
+				LOG.debug("Multi-variable search failed in {}", mth);
 			}
 		}
-
-		boolean applySuccess = applyResolvedVars();
-		return searchSuccess && applySuccess;
+		if (searchSuccess) {
+			return applyResolvedVars();
+		}
+		return false;
 	}
 
 	private boolean applyResolvedVars() {
 		List<TypeSearchVarInfo> resolvedVars = state.getResolvedVars();
+		List<TypeSearchVarInfo> updatedVars = new ArrayList<>();
 		for (TypeSearchVarInfo var : resolvedVars) {
 			SSAVar ssaVar = var.getVar();
 			ArgType resolvedType = var.getCurrentType();
-			ssaVar.getAssign().setType(resolvedType);
-			for (RegisterArg arg : ssaVar.getUseList()) {
-				arg.setType(resolvedType);
+			if (!resolvedType.isTypeKnown()) {
+				// ignore unknown variables
+				continue;
 			}
+			if (resolvedType.equals(ssaVar.getTypeInfo().getType())) {
+				// type already set
+				continue;
+			}
+			ssaVar.setType(resolvedType);
+			updatedVars.add(var);
 		}
 		boolean applySuccess = true;
-		for (TypeSearchVarInfo var : resolvedVars) {
-			TypeUpdateResult res = typeUpdate.applyWithWiderAllow(var.getVar(), var.getCurrentType());
+		for (TypeSearchVarInfo var : updatedVars) {
+			TypeUpdateResult res = typeUpdate.applyWithWiderIgnSame(mth, var.getVar(), var.getCurrentType());
 			if (res == TypeUpdateResult.REJECT) {
+				mth.addComment("JADX DEBUG: Multi-variable search result rejected for " + var);
 				applySuccess = false;
 			}
-		}
-		if (!applySuccess) {
-			LOG.warn("Multi-variable search result apply rejected in {}", mth);
 		}
 		return applySuccess;
 	}
 
 	private boolean search(List<TypeSearchVarInfo> vars) {
 		int len = vars.size();
-		if (Consts.DEBUG) {
+		if (Consts.DEBUG_TYPE_INFERENCE) {
 			LOG.debug("Run search for {} vars: ", len);
 			StringBuilder sb = new StringBuilder();
 			long count = 1;
@@ -108,7 +120,7 @@ public class TypeSearch {
 				count *= size;
 			}
 			sb.append(" = ").append(count);
-			LOG.debug("--- count = {}, {}", count, sb);
+			LOG.debug(" > max iterations count = {}", sb);
 		}
 
 		// prepare vars
@@ -140,8 +152,14 @@ public class TypeSearch {
 			}
 			n++;
 			if (n > SEARCH_ITERATION_LIMIT) {
+				if (Consts.DEBUG_TYPE_INFERENCE) {
+					LOG.debug(" > iterations limit reached: {}", SEARCH_ITERATION_LIMIT);
+				}
 				return false;
 			}
+		}
+		if (Consts.DEBUG_TYPE_INFERENCE) {
+			LOG.debug(" > done after {} iterations", n);
 		}
 		// mark all vars as resolved
 		for (TypeSearchVarInfo var : vars) {
@@ -192,18 +210,14 @@ public class TypeSearch {
 
 	private void fillTypeCandidates(SSAVar ssaVar) {
 		TypeSearchVarInfo varInfo = state.getVarInfo(ssaVar);
-		ArgType currentType = ssaVar.getTypeInfo().getType();
-		if (currentType.isTypeKnown()) {
-			varInfo.setTypeResolved(true);
-			varInfo.setCurrentType(currentType);
-			varInfo.setCandidateTypes(Collections.emptyList());
+		ArgType immutableType = ssaVar.getImmutableType();
+		if (immutableType != null) {
+			varInfo.markResolved(immutableType);
 			return;
 		}
-		if (ssaVar.getAssign().isTypeImmutable()) {
-			ArgType initType = ssaVar.getAssign().getInitType();
-			varInfo.setTypeResolved(true);
-			varInfo.setCurrentType(initType);
-			varInfo.setCandidateTypes(Collections.emptyList());
+		ArgType currentType = ssaVar.getTypeInfo().getType();
+		if (currentType.isTypeKnown()) {
+			varInfo.markResolved(currentType);
 			return;
 		}
 
@@ -229,14 +243,14 @@ public class TypeSearch {
 			addCandidateTypes(bounds, candidateTypes, getNarrowTypes(useType));
 		}
 
+		addUsageTypeCandidates(ssaVar, bounds, candidateTypes);
+
 		int size = candidateTypes.size();
 		if (size == 0) {
-			throw new JadxRuntimeException("No candidate types for var: " + ssaVar.getDetailedVarInfo(mth)
-					+ "\n  assigns: " + assigns
-					+ "\n  uses: " + uses
-					+ "\n  mth insns count: " + mth.countInsns());
-		}
-		if (size == 1) {
+			varInfo.setTypeResolved(true);
+			varInfo.setCurrentType(ArgType.UNKNOWN);
+			varInfo.setCandidateTypes(Collections.emptyList());
+		} else if (size == 1) {
 			varInfo.setTypeResolved(true);
 			varInfo.setCurrentType(candidateTypes.iterator().next());
 			varInfo.setCandidateTypes(Collections.emptyList());
@@ -244,26 +258,48 @@ public class TypeSearch {
 			varInfo.setTypeResolved(false);
 			varInfo.setCurrentType(ArgType.UNKNOWN);
 			ArrayList<ArgType> types = new ArrayList<>(candidateTypes);
-			types.sort(typeCompare.getComparator());
+			types.sort(typeCompare.getReversedComparator());
 			varInfo.setCandidateTypes(Collections.unmodifiableList(types));
 		}
 	}
 
-	private void addCandidateTypes(Set<ITypeBound> bounds, Set<ArgType> collectedTypes, Collection<ArgType> candidateTypes) {
-		for (ArgType candidateType : candidateTypes) {
-			if (candidateType.isTypeKnown() && typeUpdate.inBounds(bounds, candidateType)) {
-				collectedTypes.add(candidateType);
-				if (collectedTypes.size() > CANDIDATES_COUNT_LIMIT) {
-					return;
+	private void addUsageTypeCandidates(SSAVar ssaVar, Set<ITypeBound> bounds, Set<ArgType> candidateTypes) {
+		for (RegisterArg useArg : ssaVar.getUseList()) {
+			InsnNode parentInsn = useArg.getParentInsn();
+			if (parentInsn != null) {
+				InsnType insnType = parentInsn.getType();
+				if (insnType == InsnType.APUT) {
+					ArgType aputType = parentInsn.getArg(2).getType();
+					if (aputType.isTypeKnown()) {
+						addCandidateType(bounds, candidateTypes, ArgType.array(aputType));
+					}
 				}
 			}
 		}
 	}
 
+	private void addCandidateTypes(Set<ITypeBound> bounds, Set<ArgType> collectedTypes, Collection<ArgType> candidateTypes) {
+		for (ArgType candidateType : candidateTypes) {
+			if (addCandidateType(bounds, collectedTypes, candidateType)) {
+				return;
+			}
+		}
+	}
+
+	private boolean addCandidateType(Set<ITypeBound> bounds, Set<ArgType> collectedTypes, ArgType candidateType) {
+		if (candidateType.isTypeKnown() && typeUpdate.inBounds(bounds, candidateType)) {
+			collectedTypes.add(candidateType);
+			if (collectedTypes.size() > CANDIDATES_COUNT_LIMIT) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private List<ArgType> getWiderTypes(ArgType type) {
 		if (type.isTypeKnown()) {
 			if (type.isObject()) {
-				Set<String> ancestors = mth.root().getClsp().getAncestors(type.getObject());
+				Set<String> ancestors = mth.root().getClsp().getSuperTypes(type.getObject());
 				return ancestors.stream().map(ArgType::object).collect(Collectors.toList());
 			}
 		} else {
@@ -309,14 +345,6 @@ public class TypeSearch {
 		}
 	}
 
-	public static ArgType getArgType(TypeSearchState state, InsnArg arg) {
-		if (arg.isRegister()) {
-			RegisterArg reg = (RegisterArg) arg;
-			return state.getVarInfo(reg.getSVar()).getCurrentType();
-		}
-		return arg.getType();
-	}
-
 	private void addConstraint(TypeSearchVarInfo varInfo, ITypeConstraint constraint) {
 		if (constraint != null) {
 			varInfo.getConstraints().add(constraint);
@@ -349,10 +377,10 @@ public class TypeSearch {
 		return new AbstractTypeConstraint(insn, arg) {
 			@Override
 			public boolean check(TypeSearchState state) {
-				ArgType resType = getArgType(state, insn.getResult());
-				ArgType argType = getArgType(state, insn.getArg(0));
+				ArgType resType = state.getArgType(insn.getResult());
+				ArgType argType = state.getArgType(insn.getArg(0));
 				TypeCompareEnum res = typeCompare.compareTypes(resType, argType);
-				return res == TypeCompareEnum.EQUAL || res.isWider();
+				return res.isEqual() || res.isWider();
 			}
 		};
 	}
@@ -361,9 +389,9 @@ public class TypeSearch {
 		return new AbstractTypeConstraint(insn, arg) {
 			@Override
 			public boolean check(TypeSearchState state) {
-				ArgType resType = getArgType(state, insn.getResult());
+				ArgType resType = state.getArgType(insn.getResult());
 				for (InsnArg insnArg : insn.getArguments()) {
-					ArgType argType = getArgType(state, insnArg);
+					ArgType argType = state.getArgType(insnArg);
 					if (!argType.equals(resType)) {
 						return false;
 					}

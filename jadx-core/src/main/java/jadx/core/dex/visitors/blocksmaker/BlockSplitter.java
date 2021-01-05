@@ -37,7 +37,7 @@ public class BlockSplitter extends AbstractVisitor {
 			InsnType.MONITOR_EXIT,
 			InsnType.THROW);
 
-	public static boolean makeSeparate(InsnType insnType) {
+	public static boolean isSeparate(InsnType insnType) {
 		return SEPARATE_INSNS.contains(insnType);
 	}
 
@@ -77,6 +77,7 @@ public class BlockSplitter extends AbstractVisitor {
 		InsnNode prevInsn = null;
 		Map<Integer, BlockNode> blocksMap = new HashMap<>();
 		BlockNode curBlock = startNewBlock(mth, 0);
+		curBlock.add(AFlag.MTH_ENTER_BLOCK);
 		mth.setEnterBlock(curBlock);
 
 		// split into blocks
@@ -89,7 +90,7 @@ public class BlockSplitter extends AbstractVisitor {
 				InsnType type = prevInsn.getType();
 				if (type == InsnType.GOTO
 						|| type == InsnType.THROW
-						|| makeSeparate(type)) {
+						|| isSeparate(type)) {
 
 					if (type == InsnType.RETURN || type == InsnType.THROW) {
 						mth.addExitBlock(curBlock);
@@ -102,7 +103,7 @@ public class BlockSplitter extends AbstractVisitor {
 					startNew = true;
 				} else {
 					startNew = isSplitByJump(prevInsn, insn)
-							|| makeSeparate(insn.getType())
+							|| isSeparate(insn.getType())
 							|| isDoWhile(blocksMap, curBlock, insn)
 							|| insn.contains(AType.EXC_HANDLER)
 							|| prevInsn.contains(AFlag.TRY_LEAVE)
@@ -112,12 +113,11 @@ public class BlockSplitter extends AbstractVisitor {
 					}
 				}
 			}
+			if (insn.contains(AType.EXC_HANDLER)) {
+				processExceptionHandler(mth, curBlock, insn);
+			}
 			if (insn.contains(AFlag.TRY_ENTER)) {
 				curBlock = insertSplitterBlock(mth, blocksMap, curBlock, insn, startNew);
-			} else if (insn.contains(AType.EXC_HANDLER)) {
-				processExceptionHandler(mth, curBlock, insn);
-				blocksMap.put(insn.getOffset(), curBlock);
-				curBlock.getInstructions().add(insn);
 			} else {
 				blocksMap.put(insn.getOffset(), curBlock);
 				curBlock.getInstructions().add(insn);
@@ -331,14 +331,15 @@ public class BlockSplitter extends AbstractVisitor {
 	static boolean removeEmptyDetachedBlocks(MethodNode mth) {
 		return mth.getBasicBlocks().removeIf(block -> block.getInstructions().isEmpty()
 				&& block.getPredecessors().isEmpty()
-				&& block.getSuccessors().isEmpty());
+				&& block.getSuccessors().isEmpty()
+				&& !block.contains(AFlag.MTH_ENTER_BLOCK));
 	}
 
 	private static boolean removeUnreachableBlocks(MethodNode mth) {
 		Set<BlockNode> toRemove = new LinkedHashSet<>();
 		for (BlockNode block : mth.getBasicBlocks()) {
 			if (block.getPredecessors().isEmpty() && block != mth.getEnterBlock()) {
-				collectSuccessors(block, toRemove);
+				collectSuccessors(block, mth.getEnterBlock(), toRemove);
 			}
 		}
 		if (toRemove.isEmpty()) {
@@ -385,10 +386,11 @@ public class BlockSplitter extends AbstractVisitor {
 		return block.getInstructions().isEmpty()
 				&& block.isAttrStorageEmpty()
 				&& block.getSuccessors().size() <= 1
-				&& !block.getPredecessors().isEmpty();
+				&& !block.getPredecessors().isEmpty()
+				&& !block.contains(AFlag.MTH_ENTER_BLOCK);
 	}
 
-	private static void collectSuccessors(BlockNode startBlock, Set<BlockNode> toRemove) {
+	private static void collectSuccessors(BlockNode startBlock, BlockNode methodEnterBlock, Set<BlockNode> toRemove) {
 		Deque<BlockNode> stack = new ArrayDeque<>();
 		stack.add(startBlock);
 		while (!stack.isEmpty()) {
@@ -396,7 +398,7 @@ public class BlockSplitter extends AbstractVisitor {
 			if (!toRemove.contains(block)) {
 				toRemove.add(block);
 				for (BlockNode successor : block.getSuccessors()) {
-					if (toRemove.containsAll(successor.getPredecessors())) {
+					if (successor != methodEnterBlock && toRemove.containsAll(successor.getPredecessors())) {
 						stack.push(successor);
 					}
 				}

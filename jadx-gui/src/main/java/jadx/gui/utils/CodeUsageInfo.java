@@ -5,6 +5,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jadx.api.CodePosition;
 import jadx.api.JavaClass;
@@ -14,6 +18,7 @@ import jadx.gui.treemodel.JNode;
 import jadx.gui.utils.search.StringRef;
 
 public class CodeUsageInfo {
+	private static final Logger LOG = LoggerFactory.getLogger(CodeUsageInfo.class);
 
 	public static class UsageInfo {
 		private final List<CodeNode> usageList = new ArrayList<>();
@@ -24,6 +29,10 @@ public class CodeUsageInfo {
 
 		public synchronized void addUsage(CodeNode codeNode) {
 			usageList.add(codeNode);
+		}
+
+		public synchronized void removeUsageIf(Predicate<? super CodeNode> filter) {
+			usageList.removeIf(filter);
 		}
 	}
 
@@ -36,11 +45,15 @@ public class CodeUsageInfo {
 	private final Map<JNode, UsageInfo> usageMap = new ConcurrentHashMap<>();
 
 	public void processClass(JavaClass javaClass, CodeLinesInfo linesInfo, List<StringRef> lines) {
-		Map<CodePosition, JavaNode> usage = javaClass.getUsageMap();
-		for (Map.Entry<CodePosition, JavaNode> entry : usage.entrySet()) {
-			CodePosition codePosition = entry.getKey();
-			JavaNode javaNode = entry.getValue();
-			addUsage(nodeCache.makeFrom(javaNode), javaClass, linesInfo, codePosition, lines);
+		try {
+			Map<CodePosition, JavaNode> usage = javaClass.getUsageMap();
+			for (Map.Entry<CodePosition, JavaNode> entry : usage.entrySet()) {
+				CodePosition codePosition = entry.getKey();
+				JavaNode javaNode = entry.getValue();
+				addUsage(nodeCache.makeFrom(javaNode), javaClass, linesInfo, codePosition, lines);
+			}
+		} catch (Exception e) {
+			LOG.error("Code usage process failed for class: {}", javaClass, e);
 		}
 	}
 
@@ -61,5 +74,15 @@ public class CodeUsageInfo {
 			return Collections.emptyList();
 		}
 		return usageInfo.getUsageList();
+	}
+
+	public void remove(JavaClass cls) {
+		usageMap.entrySet().removeIf(e -> {
+			if (e.getKey().getJavaNode().getTopParentClass().equals(cls)) {
+				return true;
+			}
+			e.getValue().removeUsageIf(node -> node.getJavaNode().getTopParentClass().equals(cls));
+			return false;
+		});
 	}
 }

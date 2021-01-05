@@ -1,60 +1,55 @@
 package jadx.core.dex.info;
 
 import java.util.List;
+import java.util.Objects;
 
-import com.android.dex.MethodId;
-import com.android.dex.ProtoId;
+import org.jetbrains.annotations.Nullable;
 
+import jadx.api.plugins.input.data.IMethodRef;
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.instructions.args.ArgType;
-import jadx.core.dex.nodes.DexNode;
+import jadx.core.dex.nodes.RootNode;
 import jadx.core.utils.Utils;
 
-public final class MethodInfo {
+public final class MethodInfo implements Comparable<MethodInfo> {
 
 	private final String name;
 	private final ArgType retType;
-	private final List<ArgType> args;
+	private final List<ArgType> argTypes;
 	private final ClassInfo declClass;
 	private final String shortId;
 	private String alias;
-	private boolean aliasFromPreset;
-
-	private MethodInfo(DexNode dex, int mthIndex) {
-		MethodId mthId = dex.getMethodId(mthIndex);
-		name = dex.getString(mthId.getNameIndex());
-		alias = name;
-		aliasFromPreset = false;
-		declClass = ClassInfo.fromDex(dex, mthId.getDeclaringClassIndex());
-
-		ProtoId proto = dex.getProtoId(mthId.getProtoIndex());
-		retType = dex.getType(proto.getReturnTypeIndex());
-		args = dex.readParamList(proto.getParametersOffset());
-		shortId = makeSignature(true);
-	}
 
 	private MethodInfo(ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
 		this.name = name;
-		alias = name;
-		aliasFromPreset = false;
+		this.alias = name;
 		this.declClass = declClass;
-
-		this.args = args;
+		this.argTypes = args;
 		this.retType = retType;
-		shortId = makeSignature(true);
+		this.shortId = makeShortId(name, argTypes, retType);
 	}
 
-	public static MethodInfo externalMth(ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
-		return new MethodInfo(declClass, name, args, retType);
-	}
-
-	public static MethodInfo fromDex(DexNode dex, int mthIndex) {
-		MethodInfo mth = dex.root().getInfoStorage().getMethod(dex, mthIndex);
-		if (mth != null) {
-			return mth;
+	public static MethodInfo fromRef(RootNode root, IMethodRef methodRef) {
+		InfoStorage infoStorage = root.getInfoStorage();
+		int uniqId = methodRef.getUniqId();
+		MethodInfo prevMth = infoStorage.getByUniqId(uniqId);
+		if (prevMth != null) {
+			return prevMth;
 		}
-		mth = new MethodInfo(dex, mthIndex);
-		return dex.root().getInfoStorage().putMethod(dex, mthIndex, mth);
+		methodRef.load();
+		ArgType parentClsType = ArgType.parse(methodRef.getParentClassType());
+		ClassInfo parentClass = ClassInfo.fromType(root, parentClsType);
+		ArgType returnType = ArgType.parse(methodRef.getReturnType());
+		List<ArgType> args = Utils.collectionMap(methodRef.getArgTypes(), ArgType::parse);
+		MethodInfo newMth = new MethodInfo(parentClass, methodRef.getName(), args, returnType);
+		MethodInfo uniqMth = infoStorage.putMethod(newMth);
+		infoStorage.putByUniqId(uniqId, uniqMth);
+		return uniqMth;
+	}
+
+	public static MethodInfo fromDetails(RootNode root, ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
+		MethodInfo newMth = new MethodInfo(declClass, name, args, retType);
+		return root.getInfoStorage().putMethod(newMth);
 	}
 
 	public String makeSignature(boolean includeRetType) {
@@ -62,17 +57,29 @@ public final class MethodInfo {
 	}
 
 	public String makeSignature(boolean useAlias, boolean includeRetType) {
-		StringBuilder signature = new StringBuilder();
-		signature.append(useAlias ? alias : name);
-		signature.append('(');
-		for (ArgType arg : args) {
-			signature.append(TypeGen.signature(arg));
+		return makeShortId(useAlias ? alias : name,
+				argTypes,
+				includeRetType ? retType : null);
+	}
+
+	public static String makeShortId(String name, List<ArgType> argTypes, @Nullable ArgType retType) {
+		StringBuilder sb = new StringBuilder();
+		sb.append(name);
+		sb.append('(');
+		for (ArgType arg : argTypes) {
+			sb.append(TypeGen.signature(arg));
 		}
-		signature.append(')');
-		if (includeRetType) {
-			signature.append(TypeGen.signature(retType));
+		sb.append(')');
+		if (retType != null) {
+			sb.append(TypeGen.signature(retType));
 		}
-		return signature.toString();
+		return sb.toString();
+	}
+
+	public boolean isOverloadedBy(MethodInfo otherMthInfo) {
+		return argTypes.size() == otherMthInfo.argTypes.size()
+				&& name.equals(otherMthInfo.name)
+				&& !Objects.equals(this.shortId, otherMthInfo.shortId);
 	}
 
 	public String getName() {
@@ -107,11 +114,11 @@ public final class MethodInfo {
 	}
 
 	public List<ArgType> getArgumentsTypes() {
-		return args;
+		return argTypes;
 	}
 
 	public int getArgsCount() {
-		return args.size();
+		return argTypes.size();
 	}
 
 	public boolean isConstructor() {
@@ -130,24 +137,13 @@ public final class MethodInfo {
 		this.alias = alias;
 	}
 
-	public boolean isRenamed() {
+	public boolean hasAlias() {
 		return !name.equals(alias);
-	}
-
-	public boolean isAliasFromPreset() {
-		return aliasFromPreset;
-	}
-
-	public void setAliasFromPreset(boolean value) {
-		aliasFromPreset = value;
 	}
 
 	@Override
 	public int hashCode() {
-		int result = declClass.hashCode();
-		result = 31 * result + retType.hashCode();
-		result = 31 * result + shortId.hashCode();
-		return result;
+		return shortId.hashCode() + 31 * declClass.hashCode();
 	}
 
 	@Override
@@ -160,13 +156,21 @@ public final class MethodInfo {
 		}
 		MethodInfo other = (MethodInfo) obj;
 		return shortId.equals(other.shortId)
-				&& retType.equals(other.retType)
 				&& declClass.equals(other.declClass);
+	}
+
+	@Override
+	public int compareTo(MethodInfo other) {
+		int clsCmp = declClass.compareTo(other.declClass);
+		if (clsCmp != 0) {
+			return clsCmp;
+		}
+		return shortId.compareTo(other.shortId);
 	}
 
 	@Override
 	public String toString() {
 		return declClass.getFullName() + '.' + name
-				+ '(' + Utils.listToString(args) + "):" + retType;
+				+ '(' + Utils.listToString(argTypes) + "):" + retType;
 	}
 }

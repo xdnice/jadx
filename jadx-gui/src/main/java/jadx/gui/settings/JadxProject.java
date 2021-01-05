@@ -38,7 +38,15 @@ public class JadxProject {
 
 	private int projectVersion = 0;
 
+	// Don't remove. Used in json serialization
+	public JadxProject() {
+	}
+
 	public JadxProject(JadxSettings settings) {
+		this.settings = settings;
+	}
+
+	public void setSettings(JadxSettings settings) {
 		this.settings = settings;
 	}
 
@@ -56,13 +64,13 @@ public class JadxProject {
 		changed();
 	}
 
-	public Path getFilePath() {
-		return filesPath == null ? null : filesPath.get(0);
+	public List<Path> getFilePaths() {
+		return filesPath;
 	}
 
-	public void setFilePath(Path filePath) {
-		if (!filePath.equals(getFilePath())) {
-			this.filesPath = Arrays.asList(filePath);
+	public void setFilePath(List<Path> files) {
+		if (!files.equals(getFilePaths())) {
+			this.filesPath = files;
 			changed();
 		}
 	}
