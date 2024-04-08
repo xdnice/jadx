@@ -10,8 +10,10 @@ import java.util.Map;
 import java.util.Set;
 
 import jadx.api.ICodeInfo;
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
+import jadx.api.impl.SimpleCodeWriter;
 import jadx.core.utils.StringUtils;
+import jadx.core.xmlgen.entry.ProtoValue;
 import jadx.core.xmlgen.entry.RawNamedValue;
 import jadx.core.xmlgen.entry.ResourceEntry;
 import jadx.core.xmlgen.entry.ValuesParser;
@@ -21,10 +23,22 @@ import static jadx.core.xmlgen.ParserConstants.TYPE_REFERENCE;
 
 public class ResXmlGen {
 
+	/**
+	 * Skip only file based resource type
+	 */
 	private static final Set<String> SKIP_RES_TYPES = new HashSet<>(Arrays.asList(
+			"anim",
+			"animator",
+			"font",
+			"id", // skip id type, it is usually auto generated when used this syntax "@+id/my_id"
+			"interpolator",
 			"layout",
+			"menu",
 			"mipmap",
-			"id"));
+			"navigation",
+			"raw",
+			"transition",
+			"xml"));
 
 	private final ResourceStorage resStorage;
 	private final ValuesParser vp;
@@ -35,15 +49,15 @@ public class ResXmlGen {
 	}
 
 	public List<ResContainer> makeResourcesXml() {
-		Map<String, CodeWriter> contMap = new HashMap<>();
+		Map<String, ICodeWriter> contMap = new HashMap<>();
 		for (ResourceEntry ri : resStorage.getResources()) {
 			if (SKIP_RES_TYPES.contains(ri.getTypeName())) {
 				continue;
 			}
 			String fn = getFileName(ri);
-			CodeWriter cw = contMap.get(fn);
+			ICodeWriter cw = contMap.get(fn);
 			if (cw == null) {
-				cw = new CodeWriter();
+				cw = new SimpleCodeWriter();
 				cw.add("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
 				cw.startLine("<resources>");
 				cw.incIndent();
@@ -53,10 +67,9 @@ public class ResXmlGen {
 		}
 
 		List<ResContainer> files = new ArrayList<>(contMap.size());
-		for (Map.Entry<String, CodeWriter> entry : contMap.entrySet()) {
+		for (Map.Entry<String, ICodeWriter> entry : contMap.entrySet()) {
 			String fileName = entry.getKey();
-			CodeWriter content = entry.getValue();
-
+			ICodeWriter content = entry.getValue();
 			content.decIndent();
 			content.startLine("</resources>");
 			ICodeInfo codeInfo = content.finish();
@@ -66,88 +79,129 @@ public class ResXmlGen {
 		return files;
 	}
 
-	private void addValue(CodeWriter cw, ResourceEntry ri) {
-		if (ri.getSimpleValue() != null) {
+	private void addValue(ICodeWriter cw, ResourceEntry ri) {
+		if (ri.getProtoValue() != null) {
+			ProtoValue protoValue = ri.getProtoValue();
+			if (protoValue.getValue() != null && protoValue.getNamedValues() == null) {
+				addSimpleValue(cw, ri.getTypeName(), ri.getTypeName(), "name", ri.getKeyName(), protoValue.getValue());
+			} else {
+				cw.startLine();
+				cw.add('<').add(ri.getTypeName()).add(' ');
+				String itemTag = "item";
+				cw.add("name=\"").add(ri.getKeyName()).add('\"');
+				if (ri.getTypeName().equals("attr") && protoValue.getValue() != null) {
+					cw.add(" format=\"").add(protoValue.getValue()).add('\"');
+				}
+				if (protoValue.getParent() != null) {
+					cw.add(" parent=\"").add(protoValue.getParent()).add('\"');
+				}
+				cw.add(">");
+
+				cw.incIndent();
+				for (ProtoValue value : protoValue.getNamedValues()) {
+					addProtoItem(cw, itemTag, ri.getTypeName(), value);
+				}
+				cw.decIndent();
+				cw.startLine().add("</").add(ri.getTypeName()).add('>');
+			}
+		} else if (ri.getSimpleValue() != null) {
 			String valueStr = vp.decodeValue(ri.getSimpleValue());
 			addSimpleValue(cw, ri.getTypeName(), ri.getTypeName(), "name", ri.getKeyName(), valueStr);
 		} else {
+			boolean skipNamedValues = false;
 			cw.startLine();
-			cw.add('<').add(ri.getTypeName()).add(' ');
+			cw.add('<').add(ri.getTypeName()).add(" name=\"");
 			String itemTag = "item";
 			if (ri.getTypeName().equals("attr") && !ri.getNamedValues().isEmpty()) {
-				cw.add("name=\"").add(ri.getKeyName());
+				cw.add(ri.getKeyName());
 				int type = ri.getNamedValues().get(0).getRawValue().getData();
 				if ((type & ValuesParser.ATTR_TYPE_ENUM) != 0) {
 					itemTag = "enum";
 				} else if ((type & ValuesParser.ATTR_TYPE_FLAGS) != 0) {
 					itemTag = "flag";
 				}
-				String formatValue = getTypeAsString(type);
+				String formatValue = XmlGenUtils.getAttrTypeAsString(type);
 				if (formatValue != null) {
 					cw.add("\" format=\"").add(formatValue);
 				}
-				cw.add("\"");
+				if (ri.getNamedValues().size() > 1) {
+					for (RawNamedValue rv : ri.getNamedValues()) {
+						if (rv.getNameRef() == ParserConstants.ATTR_MIN) {
+							cw.add("\" min=\"").add(String.valueOf(rv.getRawValue().getData()));
+							skipNamedValues = true;
+						}
+					}
+				}
 			} else {
-				cw.add("name=\"").add(ri.getKeyName()).add('\"');
+				cw.add(ri.getKeyName());
 			}
-			if (ri.getParentRef() != 0) {
-				String parent = vp.decodeValue(TYPE_REFERENCE, ri.getParentRef());
-				cw.add(" parent=\"").add(parent).add('\"');
+			if (ri.getTypeName().equals("style") || ri.getParentRef() != 0) {
+				cw.add("\" parent=\"");
+				if (ri.getParentRef() != 0) {
+					String parent = vp.decodeValue(TYPE_REFERENCE, ri.getParentRef());
+					cw.add(parent);
+				}
 			}
-			cw.add(">");
+			cw.add("\">");
 
-			cw.incIndent();
-			for (RawNamedValue value : ri.getNamedValues()) {
-				addItem(cw, itemTag, ri.getTypeName(), value);
+			if (!skipNamedValues) {
+				cw.incIndent();
+				for (RawNamedValue value : ri.getNamedValues()) {
+					addItem(cw, itemTag, ri.getTypeName(), value);
+				}
+				cw.decIndent();
 			}
-			cw.decIndent();
 			cw.startLine().add("</").add(ri.getTypeName()).add('>');
 		}
 	}
 
-	private String getTypeAsString(int type) {
-		String s = "";
-		if ((type & ValuesParser.ATTR_TYPE_REFERENCE) != 0) {
-			s += "|reference";
+	private void addProtoItem(ICodeWriter cw, String itemTag, String typeName, ProtoValue protoValue) {
+		String name = protoValue.getName();
+		String value = protoValue.getValue();
+		switch (typeName) {
+			case "attr":
+				if (name != null) {
+					addSimpleValue(cw, typeName, itemTag, name, value, "");
+				}
+				break;
+			case "style":
+				if (name != null) {
+					addSimpleValue(cw, typeName, itemTag, name, "", value);
+				}
+				break;
+			case "plurals":
+				addSimpleValue(cw, typeName, itemTag, "quantity", name, value);
+				break;
+			default:
+				addSimpleValue(cw, typeName, itemTag, null, null, value);
+				break;
 		}
-		if ((type & ValuesParser.ATTR_TYPE_STRING) != 0) {
-			s += "|string";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_INTEGER) != 0) {
-			s += "|integer";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_BOOLEAN) != 0) {
-			s += "|boolean";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_COLOR) != 0) {
-			s += "|color";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_FLOAT) != 0) {
-			s += "|float";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_DIMENSION) != 0) {
-			s += "|dimension";
-		}
-		if ((type & ValuesParser.ATTR_TYPE_FRACTION) != 0) {
-			s += "|fraction";
-		}
-		if (s.isEmpty()) {
-			return null;
-		}
-		return s.substring(1);
 	}
 
-	private void addItem(CodeWriter cw, String itemTag, String typeName, RawNamedValue value) {
+	private void addItem(ICodeWriter cw, String itemTag, String typeName, RawNamedValue value) {
 		String nameStr = vp.decodeNameRef(value.getNameRef());
 		String valueStr = vp.decodeValue(value.getRawValue());
+		int dataType = value.getRawValue().getDataType();
+
 		if (!typeName.equals("attr")) {
-			if (valueStr == null || valueStr.equals("0")) {
+			if (dataType == ParserConstants.TYPE_REFERENCE && (valueStr == null || valueStr.equals("0"))) {
 				valueStr = "@null";
 			}
-			if (nameStr != null) {
+			if (dataType == ParserConstants.TYPE_INT_DEC && nameStr != null) {
 				try {
 					int intVal = Integer.parseInt(valueStr);
-					String newVal = ManifestAttributes.getInstance().decode(nameStr.replace("android:attr.", ""), intVal);
+					String newVal = ManifestAttributes.getInstance().decode(nameStr.replace("android:", "").replace("attr.", ""), intVal);
+					if (newVal != null) {
+						valueStr = newVal;
+					}
+				} catch (NumberFormatException e) {
+					// ignore
+				}
+			}
+			if (dataType == ParserConstants.TYPE_INT_HEX && nameStr != null) {
+				try {
+					int intVal = Integer.decode(valueStr);
+					String newVal = ManifestAttributes.getInstance().decode(nameStr.replace("android:", "").replace("attr.", ""), intVal);
 					if (newVal != null) {
 						valueStr = newVal;
 					}
@@ -177,7 +231,7 @@ public class ResXmlGen {
 		}
 	}
 
-	private void addSimpleValue(CodeWriter cw, String typeName, String itemTag, String attrName, String attrValue, String valueStr) {
+	private void addSimpleValue(ICodeWriter cw, String typeName, String itemTag, String attrName, String attrValue, String valueStr) {
 		if (valueStr == null) {
 			return;
 		}
@@ -196,11 +250,16 @@ public class ResXmlGen {
 				cw.add(' ').add(attrName).add("=\"").add(attrValue).add('"');
 			}
 		}
+
+		if (itemTag.equals("string") && valueStr.contains("%") && StringFormattedCheck.hasMultipleNonPositionalSubstitutions(valueStr)) {
+			cw.add(" formatted=\"false\"");
+		}
+
 		if (valueStr.equals("")) {
 			cw.add(" />");
 		} else {
 			cw.add('>');
-			if (itemTag.equals("string")) {
+			if (itemTag.equals("string") || (typeName.equals("array") && valueStr.charAt(0) != '@')) {
 				cw.add(StringUtils.escapeResStrValue(valueStr));
 			} else {
 				cw.add(StringUtils.escapeResValue(valueStr));

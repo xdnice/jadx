@@ -1,32 +1,28 @@
 package jadx.gui.ui.codearea;
 
-import java.awt.event.ActionEvent;
-
-import org.jetbrains.annotations.Nullable;
-
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.UsageDialog;
-import jadx.gui.utils.NLS;
+import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.ActionModel;
+import jadx.gui.ui.dialog.UsageDialog;
 
-public final class FindUsageAction extends JNodeMenuAction<JNode> {
+public final class FindUsageAction extends JNodeAction {
 	private static final long serialVersionUID = 4692546569977976384L;
 
 	public FindUsageAction(CodeArea codeArea) {
-		super(NLS.str("popup.find_usage"), codeArea);
+		super(ActionModel.FIND_USAGE, codeArea);
 	}
 
 	@Override
-	public void actionPerformed(ActionEvent e) {
-		if (node == null) {
-			return;
-		}
-		UsageDialog usageDialog = new UsageDialog(codeArea.getMainWindow(), node);
+	public void runAction(JNode node) {
+		MainWindow mw = getCodeArea().getMainWindow();
+		UsageDialog usageDialog = new UsageDialog(mw, node);
+		mw.addLoadListener(loaded -> {
+			if (!loaded) {
+				usageDialog.dispose();
+				return true;
+			}
+			return false;
+		});
 		usageDialog.setVisible(true);
-	}
-
-	@Nullable
-	@Override
-	public JNode getNodeByOffset(int offset) {
-		return codeArea.getJNodeAtOffset(offset);
 	}
 }

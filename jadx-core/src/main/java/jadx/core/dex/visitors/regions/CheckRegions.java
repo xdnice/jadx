@@ -6,7 +6,9 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
+import jadx.api.impl.SimpleCodeWriter;
+import jadx.core.Consts;
 import jadx.core.codegen.InsnGen;
 import jadx.core.codegen.MethodGen;
 import jadx.core.dex.attributes.AFlag;
@@ -45,7 +47,8 @@ public class CheckRegions extends AbstractVisitor {
 				if (blocksInRegions.add(block)) {
 					return;
 				}
-				if (LOG.isDebugEnabled()
+				if (Consts.DEBUG_RESTRUCTURE
+						&& LOG.isDebugEnabled()
 						&& !block.contains(AFlag.RETURN)
 						&& !block.contains(AFlag.REMOVE)
 						&& !block.contains(AFlag.SYNTHETIC)
@@ -83,7 +86,7 @@ public class CheckRegions extends AbstractVisitor {
 	}
 
 	private static String getBlockInsnStr(MethodNode mth, IBlock block) {
-		CodeWriter code = new CodeWriter();
+		ICodeWriter code = new SimpleCodeWriter();
 		code.incIndent();
 		code.newLine();
 		MethodGen mg = MethodGen.getFallbackMethodGen(mth);
@@ -96,7 +99,6 @@ public class CheckRegions extends AbstractVisitor {
 			}
 		}
 		code.newLine();
-		code.finish();
-		return code.toString();
+		return code.getCodeStr();
 	}
 }

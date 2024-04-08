@@ -3,6 +3,7 @@ package jadx.core.utils;
 import java.util.ArrayList;
 import java.util.List;
 
+import jadx.api.ICodeWriter;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
@@ -18,10 +19,8 @@ import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.visitors.IDexTreeVisitor;
 import jadx.core.dex.visitors.PrepareForCodeGen;
-import jadx.core.dex.visitors.RenameVisitor;
+import jadx.core.dex.visitors.rename.RenameVisitor;
 import jadx.core.utils.exceptions.JadxRuntimeException;
-
-import static jadx.core.codegen.CodeWriter.NL;
 
 /**
  * Check invariants and information consistency for registers and SSA variables
@@ -52,6 +51,7 @@ public class DebugChecks {
 				checkInsn(mth, insn);
 			}
 		}
+		checkSSAVars(mth);
 		// checkPHI(mth);
 	}
 
@@ -80,20 +80,86 @@ public class DebugChecks {
 
 		SSAVar sVar = reg.getSVar();
 		if (sVar == null) {
+			if (reg.contains(AFlag.DONT_GENERATE) || insn.contains(AFlag.DONT_GENERATE)) {
+				return;
+			}
 			if (Utils.notEmpty(mth.getSVars())) {
-				throw new JadxRuntimeException("Null SSA var in " + insn + ", mth: " + mth);
+				throw new JadxRuntimeException("Null SSA var in " + reg + " at " + insn);
 			}
 			return;
 		}
+		if (Utils.indexInListByRef(mth.getSVars(), sVar) == -1) {
+			throw new JadxRuntimeException("SSA var not present in method vars list, var: " + sVar + " from insn: " + insn);
+		}
+		RegisterArg resArg = insn.getResult();
 		List<RegisterArg> useList = sVar.getUseList();
-		boolean assignReg = insn.getResult() == reg;
-		if (!assignReg && !Utils.containsInListByRef(useList, reg)) {
-			throw new JadxRuntimeException("Incorrect use list in ssa var: " + sVar + ", register not listed."
-					+ NL + " insn: " + insn);
+		if (resArg == reg) {
+			if (sVar.getAssignInsn() != insn) {
+				throw new JadxRuntimeException("Incorrect assign in ssa var: " + sVar
+						+ ICodeWriter.NL + " expected: " + sVar.getAssignInsn()
+						+ ICodeWriter.NL + " got: " + insn);
+			}
+		} else {
+			if (!Utils.containsInListByRef(useList, reg)) {
+				throw new JadxRuntimeException("Incorrect use list in ssa var: " + sVar + ", register not listed."
+						+ ICodeWriter.NL + " insn: " + insn);
+			}
 		}
 		for (RegisterArg useArg : useList) {
 			checkRegisterArg(mth, useArg);
 		}
+	}
+
+	private static void checkSSAVars(MethodNode mth) {
+		for (SSAVar ssaVar : mth.getSVars()) {
+			RegisterArg assignArg = ssaVar.getAssign();
+			if (assignArg.contains(AFlag.REMOVE)) {
+				// ignore removed vars
+				continue;
+			}
+			InsnNode assignInsn = assignArg.getParentInsn();
+			if (assignInsn != null) {
+				if (insnMissing(mth, assignInsn)) {
+					throw new JadxRuntimeException("Insn not found for assign arg in SSAVar: " + ssaVar + ", insn: " + assignInsn);
+				}
+				RegisterArg resArg = assignInsn.getResult();
+				if (resArg == null) {
+					throw new JadxRuntimeException("SSA assign insn result missing. SSAVar: " + ssaVar + ", insn: " + assignInsn);
+				}
+				SSAVar assignVar = resArg.getSVar();
+				if (!assignVar.equals(ssaVar)) {
+					throw new JadxRuntimeException("Unexpected SSAVar in assign. "
+							+ "Expected: " + ssaVar + ", got: " + assignVar + ", insn: " + assignInsn);
+				}
+			}
+			for (RegisterArg arg : ssaVar.getUseList()) {
+				InsnNode useInsn = arg.getParentInsn();
+				if (useInsn == null) {
+					throw new JadxRuntimeException("Parent insn can't be null for arg in use list of SSAVar: " + ssaVar);
+				}
+				if (insnMissing(mth, useInsn)) {
+					throw new JadxRuntimeException("Insn not found for use arg for SSAVar: " + ssaVar + ", insn: " + useInsn);
+				}
+				int argIndex = useInsn.getArgIndex(arg);
+				if (argIndex == -1) {
+					throw new JadxRuntimeException("Use arg not found in insn for SSAVar: " + ssaVar + ", insn: " + useInsn);
+				}
+				InsnArg foundArg = useInsn.getArg(argIndex);
+				if (!foundArg.equals(arg)) {
+					throw new JadxRuntimeException(
+							"Incorrect use arg in insn for SSAVar: " + ssaVar + ", insn: " + useInsn + ", arg: " + foundArg);
+				}
+			}
+		}
+	}
+
+	private static boolean insnMissing(MethodNode mth, InsnNode insn) {
+		if (insn.contains(AFlag.HIDDEN)) {
+			// skip search
+			return false;
+		}
+		BlockNode block = BlockUtils.getBlockByInsn(mth, insn);
+		return block == null;
 	}
 
 	private static void checkRegisterArg(MethodNode mth, RegisterArg reg) {
@@ -111,7 +177,7 @@ public class DebugChecks {
 			BlockNode parentInsnBlock = BlockUtils.getBlockByInsn(mth, parentInsn);
 			if (parentInsnBlock == null) {
 				throw new JadxRuntimeException("Parent insn not found in blocks tree for: " + reg
-						+ NL + " insn: " + parentInsn);
+						+ ICodeWriter.NL + " insn: " + parentInsn);
 			}
 		}
 	}

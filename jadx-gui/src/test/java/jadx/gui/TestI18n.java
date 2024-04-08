@@ -8,12 +8,16 @@ import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import jadx.gui.utils.LangLocale;
+import jadx.gui.utils.NLS;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
@@ -37,6 +41,16 @@ public class TestI18n {
 	}
 
 	@Test
+	public void verifyLocales() {
+		for (LangLocale lang : NLS.getLangLocales()) {
+			Locale locale = lang.get();
+			System.out.println("Language: " + locale.getLanguage() + " - " + locale.getDisplayLanguage()
+					+ ", country: " + locale.getCountry() + " - " + locale.getDisplayCountry()
+					+ ", language tag: " + locale.toLanguageTag());
+		}
+	}
+
+	@Test
 	public void filesExactlyMatch() throws IOException {
 		Files.list(i18nPath).forEach(p -> {
 			List<String> lines;
@@ -48,7 +62,6 @@ public class TestI18n {
 				} else {
 					compareToReference(p);
 				}
-
 			} catch (IOException e) {
 				Assertions.fail("Error " + e.getMessage());
 			}

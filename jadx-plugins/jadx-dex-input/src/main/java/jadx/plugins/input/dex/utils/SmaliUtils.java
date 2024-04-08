@@ -3,13 +3,14 @@ package jadx.plugins.input.dex.utils;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
-import org.jf.baksmali.Adaptors.ClassDefinition;
-import org.jf.baksmali.BaksmaliOptions;
-import org.jf.dexlib2.dexbacked.DexBackedClassDef;
-import org.jf.dexlib2.dexbacked.DexBackedDexFile;
-import org.jf.util.IndentingWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.android.tools.smali.baksmali.Adaptors.ClassDefinition;
+import com.android.tools.smali.baksmali.BaksmaliOptions;
+import com.android.tools.smali.baksmali.formatter.BaksmaliWriter;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedClassDef;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 
 public class SmaliUtils {
 	private static final Logger LOG = LoggerFactory.getLogger(SmaliUtils.class);
@@ -20,7 +21,7 @@ public class SmaliUtils {
 			DexBackedDexFile dexFile = new DexBackedDexFile(null, dexBuf);
 			DexBackedClassDef dexBackedClassDef = new DexBackedClassDef(dexFile, clsDefOffset, 0);
 			ClassDefinition classDefinition = new ClassDefinition(new BaksmaliOptions(), dexBackedClassDef);
-			classDefinition.writeTo(new IndentingWriter(stringWriter));
+			classDefinition.writeTo(new BaksmaliWriter(stringWriter));
 		} catch (Exception e) {
 			LOG.error("Error generating smali", e);
 			stringWriter.append("Error generating smali code: ");

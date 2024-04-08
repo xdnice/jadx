@@ -8,26 +8,33 @@ import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.nodes.InsnNode;
 
-public final class InvokeNode extends BaseInvokeNode {
+public class InvokeNode extends BaseInvokeNode {
 
 	private final InvokeType type;
 	private final MethodInfo mth;
 
-	public InvokeNode(MethodInfo mth, InsnData insn, InvokeType type, boolean isRange) {
-		super(InsnType.INVOKE, mth.getArgsCount() + (type == InvokeType.STATIC ? 0 : 1));
+	public InvokeNode(MethodInfo mthInfo, InsnData insn, InvokeType invokeType, boolean isRange) {
+		this(mthInfo, insn, invokeType, invokeType != InvokeType.STATIC, isRange);
+	}
+
+	public InvokeNode(MethodInfo mth, InsnData insn, InvokeType type, boolean instanceCall, boolean isRange) {
+		super(InsnType.INVOKE, mth.getArgsCount() + (instanceCall ? 1 : 0));
 		this.mth = mth;
 		this.type = type;
 
 		int k = isRange ? insn.getReg(0) : 0;
-		if (type != InvokeType.STATIC) {
+		if (instanceCall) {
 			int r = isRange ? k : insn.getReg(k);
 			addReg(r, mth.getDeclClass().getType());
 			k++;
 		}
-
 		for (ArgType arg : mth.getArgumentsTypes()) {
 			addReg(isRange ? k : insn.getReg(k), arg);
 			k += arg.getRegCount();
+		}
+		int resReg = insn.getResultReg();
+		if (resReg != -1) {
+			setResult(InsnArg.reg(resReg, mth.getReturnType()));
 		}
 	}
 
@@ -60,6 +67,19 @@ public final class InvokeNode extends BaseInvokeNode {
 		return type == InvokeType.STATIC;
 	}
 
+	public boolean isPolymorphicCall() {
+		if (type == InvokeType.POLYMORPHIC) {
+			return true;
+		}
+		// java bytecode uses virtual call with modified method info
+		if (type == InvokeType.VIRTUAL
+				&& mth.getDeclClass().getFullName().equals("java.lang.invoke.MethodHandle")
+				&& (mth.getName().equals("invoke") || mth.getName().equals("invokeExact"))) {
+			return true;
+		}
+		return false;
+	}
+
 	public int getFirstArgOffset() {
 		return type == InvokeType.STATIC ? 0 : 1;
 	}
@@ -83,6 +103,6 @@ public final class InvokeNode extends BaseInvokeNode {
 
 	@Override
 	public String toString() {
-		return super.toString() + " type: " + type + " call: " + mth;
+		return baseString() + " " + type + " call: " + mth + attributesString();
 	}
 }

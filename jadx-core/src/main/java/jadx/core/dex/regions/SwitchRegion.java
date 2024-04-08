@@ -4,16 +4,23 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
+import jadx.core.codegen.RegionGen;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBranchRegion;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
 import jadx.core.utils.Utils;
+import jadx.core.utils.exceptions.CodegenException;
 
 public final class SwitchRegion extends AbstractRegion implements IBranchRegion {
 
-	public static final Object DEFAULT_CASE_KEY = new Object();
+	public static final Object DEFAULT_CASE_KEY = new Object() {
+		@Override
+		public String toString() {
+			return "default";
+		}
+	};
 
 	private final BlockNode header;
 
@@ -73,6 +80,11 @@ public final class SwitchRegion extends AbstractRegion implements IBranchRegion 
 	}
 
 	@Override
+	public void generate(RegionGen regionGen, ICodeWriter code) throws CodegenException {
+		regionGen.makeSwitch(this, code);
+	}
+
+	@Override
 	public String baseString() {
 		return header.baseString();
 	}
@@ -84,7 +96,7 @@ public final class SwitchRegion extends AbstractRegion implements IBranchRegion 
 		for (CaseInfo caseInfo : cases) {
 			List<String> keyStrings = Utils.collectionMap(caseInfo.getKeys(),
 					k -> k == DEFAULT_CASE_KEY ? "default" : k.toString());
-			sb.append(CodeWriter.NL).append(" case ")
+			sb.append(ICodeWriter.NL).append(" case ")
 					.append(Utils.listToString(keyStrings))
 					.append(" -> ").append(caseInfo.getContainer());
 		}

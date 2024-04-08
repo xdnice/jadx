@@ -11,6 +11,7 @@ public final class ResourceEntry {
 	private final String config;
 
 	private int parentRef;
+	private ProtoValue protoValue;
 	private RawValue simpleValue;
 	private List<RawNamedValue> namedValues;
 
@@ -25,13 +26,14 @@ public final class ResourceEntry {
 	public ResourceEntry copy(String newKeyName) {
 		ResourceEntry copy = new ResourceEntry(id, pkgName, typeName, newKeyName, config);
 		copy.parentRef = this.parentRef;
+		copy.protoValue = this.protoValue;
 		copy.simpleValue = this.simpleValue;
 		copy.namedValues = this.namedValues;
 		return copy;
 	}
 
 	public ResourceEntry copyWithId() {
-		return copy(keyName + "_RES_" + id);
+		return copy(String.format("%s_res_0x%08x", keyName, id));
 	}
 
 	public int getId() {
@@ -60,6 +62,14 @@ public final class ResourceEntry {
 
 	public int getParentRef() {
 		return parentRef;
+	}
+
+	public ProtoValue getProtoValue() {
+		return protoValue;
+	}
+
+	public void setProtoValue(ProtoValue protoValue) {
+		this.protoValue = protoValue;
 	}
 
 	public RawValue getSimpleValue() {

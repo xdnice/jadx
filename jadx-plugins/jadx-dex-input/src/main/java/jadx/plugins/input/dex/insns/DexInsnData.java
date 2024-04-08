@@ -2,7 +2,10 @@ package jadx.plugins.input.dex.insns;
 
 import org.jetbrains.annotations.Nullable;
 
-import jadx.api.plugins.input.data.IFieldData;
+import jadx.api.plugins.input.data.ICallSite;
+import jadx.api.plugins.input.data.IFieldRef;
+import jadx.api.plugins.input.data.IMethodHandle;
+import jadx.api.plugins.input.data.IMethodProto;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnData;
 import jadx.api.plugins.input.insns.InsnIndexType;
@@ -14,11 +17,13 @@ import jadx.plugins.input.dex.sections.SectionReader;
 public class DexInsnData implements InsnData {
 	private final DexCodeReader codeData;
 	private final SectionReader externalReader;
+	private final SectionReader secondExtReader;
 
 	private DexInsnInfo insnInfo;
 	private boolean decoded;
 	private int opcodeUnit;
 	private int length;
+	private int insnStart;
 
 	private int offset;
 	private int[] argsReg = new int[5];
@@ -32,6 +37,7 @@ public class DexInsnData implements InsnData {
 	public DexInsnData(DexCodeReader codeData, SectionReader externalReader) {
 		this.codeData = codeData;
 		this.externalReader = externalReader;
+		this.secondExtReader = externalReader.copy();
 	}
 
 	@Override
@@ -47,12 +53,27 @@ public class DexInsnData implements InsnData {
 	}
 
 	@Override
+	public int getFileOffset() {
+		return insnStart;
+	}
+
+	@Override
 	public Opcode getOpcode() {
 		DexInsnInfo info = this.insnInfo;
 		if (info == null) {
 			return Opcode.UNKNOWN;
 		}
 		return info.getApiOpcode();
+	}
+
+	@Override
+	public String getOpcodeMnemonic() {
+		return DexInsnMnemonics.get(opcodeUnit);
+	}
+
+	@Override
+	public byte[] getByteCode() {
+		return externalReader.getByteCode(insnStart, length * 2); // a unit is 2 bytes
 	}
 
 	@Override
@@ -68,6 +89,11 @@ public class DexInsnData implements InsnData {
 	@Override
 	public int getReg(int argNum) {
 		return argsReg[argNum];
+	}
+
+	@Override
+	public int getResultReg() {
+		return -1;
 	}
 
 	@Override
@@ -101,13 +127,32 @@ public class DexInsnData implements InsnData {
 	}
 
 	@Override
-	public IFieldData getIndexAsField() {
-		return externalReader.getFieldData(index);
+	public IFieldRef getIndexAsField() {
+		return externalReader.getFieldRef(index);
 	}
 
 	@Override
 	public IMethodRef getIndexAsMethod() {
 		return externalReader.getMethodRef(index);
+	}
+
+	@Override
+	public ICallSite getIndexAsCallSite() {
+		return externalReader.getCallSite(index, secondExtReader);
+	}
+
+	/**
+	 * Currently, protoIndex is either being stored at index or target, index for const-method-type,
+	 * target for invoke-polymorphic(/range)
+	 */
+	@Override
+	public IMethodProto getIndexAsProto(int protoIndex) {
+		return externalReader.getMethodProto(protoIndex);
+	}
+
+	@Override
+	public IMethodHandle getIndexAsMethodHandle() {
+		return externalReader.getMethodHandle(index);
 	}
 
 	@Nullable
@@ -134,6 +179,10 @@ public class DexInsnData implements InsnData {
 
 	public void setLength(int length) {
 		this.length = length;
+	}
+
+	public void setInsnStart(int start) {
+		this.insnStart = start;
 	}
 
 	public void setLiteral(long literal) {

@@ -2,14 +2,13 @@ package jadx.core.dex.attributes.nodes;
 
 import java.util.List;
 
+import jadx.api.ICodeWriter;
 import jadx.api.plugins.input.data.ILocalVar;
+import jadx.api.plugins.input.data.attributes.IJadxAttribute;
 import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.IAttribute;
 import jadx.core.utils.Utils;
 
-import static jadx.core.codegen.CodeWriter.NL;
-
-public class LocalVarsDebugInfoAttr implements IAttribute {
+public class LocalVarsDebugInfoAttr implements IJadxAttribute {
 	private final List<ILocalVar> localVars;
 
 	public LocalVarsDebugInfoAttr(List<ILocalVar> localVars) {
@@ -21,12 +20,12 @@ public class LocalVarsDebugInfoAttr implements IAttribute {
 	}
 
 	@Override
-	public AType<LocalVarsDebugInfoAttr> getType() {
+	public AType<LocalVarsDebugInfoAttr> getAttrType() {
 		return AType.LOCAL_VARS_DEBUG_INFO;
 	}
 
 	@Override
 	public String toString() {
-		return "Debug Info:" + NL + "  " + Utils.listToString(localVars, NL + "  ");
+		return "Debug Info:" + ICodeWriter.NL + "  " + Utils.listToString(localVars, ICodeWriter.NL + "  ");
 	}
 }

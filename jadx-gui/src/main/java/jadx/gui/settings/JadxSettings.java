@@ -1,6 +1,10 @@
 package jadx.gui.settings;
 
-import java.awt.*;
+import java.awt.Font;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
+import java.awt.Window;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -13,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import javax.swing.*;
+import javax.swing.JFrame;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.jetbrains.annotations.Nullable;
@@ -22,26 +26,40 @@ import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.Parameter;
 
+import jadx.api.CommentsLevel;
+import jadx.api.DecompilationMode;
 import jadx.api.JadxArgs;
+import jadx.api.args.GeneratedRenamesMappingFileMode;
+import jadx.api.args.IntegerFormat;
+import jadx.api.args.ResourceNameSource;
+import jadx.api.args.UserRenamesMappingsMode;
 import jadx.cli.JadxCLIArgs;
 import jadx.cli.LogHelper;
+import jadx.gui.cache.code.CodeCacheMode;
+import jadx.gui.cache.usage.UsageCacheMode;
+import jadx.gui.settings.data.ShortcutsWrapper;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.ui.action.ActionModel;
 import jadx.gui.ui.codearea.EditorTheme;
+import jadx.gui.ui.tab.dnd.TabDndGhostType;
 import jadx.gui.utils.FontUtils;
+import jadx.gui.utils.LafManager;
 import jadx.gui.utils.LangLocale;
 import jadx.gui.utils.NLS;
+import jadx.gui.utils.shortcut.Shortcut;
 
 public class JadxSettings extends JadxCLIArgs {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxSettings.class);
 
 	private static final Path USER_HOME = Paths.get(System.getProperty("user.home"));
-	private static final int RECENT_PROJECTS_COUNT = 15;
-	private static final int CURRENT_SETTINGS_VERSION = 10;
+	private static final int RECENT_PROJECTS_COUNT = 30;
+	private static final int CURRENT_SETTINGS_VERSION = 20;
 
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
 	static final Set<String> SKIP_FIELDS = new HashSet<>(Arrays.asList(
 			"files", "input", "outDir", "outDirSrc", "outDirRes", "outputFormat",
+			"deobfuscationMapFile",
 			"verbose", "quiet", "logLevel",
 			"printVersion", "printHelp"));
 
@@ -49,25 +67,77 @@ public class JadxSettings extends JadxCLIArgs {
 	private Path lastOpenFilePath = USER_HOME;
 	private Path lastSaveFilePath = USER_HOME;
 	private boolean flattenPackage = false;
-	private boolean checkForUpdates = false;
+	private boolean checkForUpdates = true;
 	private List<Path> recentProjects = new ArrayList<>();
 	private String fontStr = "";
-	private String editorThemePath = "";
+	private String smaliFontStr = "";
+	private String editorThemePath = EditorTheme.getDefaultTheme().getPath();
+	private String lafTheme = LafManager.INITIAL_THEME_NAME;
 	private LangLocale langLocale = NLS.defaultLocale();
 	private boolean autoStartJobs = false;
-	protected String excludedPackages = "";
-	private boolean autoSaveProject = false;
+	private String excludedPackages = "";
+	private SAVEOPTION saveOption = SAVEOPTION.ASK;
+
+	public enum SAVEOPTION {
+		ASK,
+		NEVER,
+		ALWAYS
+	}
+
+	public SAVEOPTION getSaveOption() {
+		return saveOption;
+	}
+
+	public void setSaveOption(SAVEOPTION saveOption) {
+		this.saveOption = saveOption;
+	}
+
+	private Map<ActionModel, Shortcut> shortcuts = new HashMap<>();
+
+	@JadxSettingsAdapter.GsonExclude
+	private ShortcutsWrapper shortcutsWrapper = null;
 
 	private boolean showHeapUsageBar = false;
+	private boolean alwaysSelectOpened = false;
+	private boolean useAlternativeFileDialog = false;
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
+	private boolean codeAreaLineWrap = false;
+	private int srhResourceSkipSize = 1000;
+	private String srhResourceFileExt = ".xml|.html|.js|.json|.txt";
+	private int searchResultsPerPage = 50;
+	private boolean useAutoSearch = true;
+	private boolean keepCommonDialogOpen = false;
+	private boolean smaliAreaShowBytecode = false;
+	private LineNumbersMode lineNumbersMode = LineNumbersMode.AUTO;
+
+	private int mainWindowVerticalSplitterLoc = 300;
+	private int debuggerStackFrameSplitterLoc = 300;
+	private int debuggerVarTreeSplitterLoc = 700;
+
+	private String adbDialogPath = "";
+	private String adbDialogHost = "localhost";
+	private String adbDialogPort = "5037";
+
+	private CodeCacheMode codeCacheMode = CodeCacheMode.DISK;
+	private UsageCacheMode usageCacheMode = UsageCacheMode.DISK;
+	private @Nullable String cacheDir = null; // null - default (system), "." - at project dir, other - custom
+
+	private boolean jumpOnDoubleClick = true;
+
+	private XposedCodegenLanguage xposedCodegenLanguage = XposedCodegenLanguage.JAVA;
+
 	/**
 	 * UI setting: the width of the tree showing the classes, resources, ...
 	 */
 	private int treeWidth = 130;
 
-	private int settingsVersion = 0;
+	private boolean dockLogViewer = true;
+
+	private TabDndGhostType tabDndGhostType = TabDndGhostType.OUTLINE;
+
+	private int settingsVersion = CURRENT_SETTINGS_VERSION;
 
 	@JadxSettingsAdapter.GsonExclude
 	@Parameter(names = { "-sc", "--select-class" }, description = "GUI: Open the selected class and show the decompiled code")
@@ -102,6 +172,14 @@ public class JadxSettings extends JadxCLIArgs {
 		if (settingsVersion != CURRENT_SETTINGS_VERSION) {
 			upgradeSettings(settingsVersion);
 		}
+	}
+
+	public int getSettingsVersion() {
+		return settingsVersion;
+	}
+
+	public void setSettingsVersion(int settingsVersion) {
+		this.settingsVersion = settingsVersion;
 	}
 
 	public String getCmdSelectClass() {
@@ -157,13 +235,22 @@ public class JadxSettings extends JadxCLIArgs {
 		return Collections.unmodifiableList(recentProjects);
 	}
 
-	public void addRecentProject(Path projectPath) {
-		recentProjects.remove(projectPath);
-		recentProjects.add(0, projectPath);
+	public void addRecentProject(@Nullable Path projectPath) {
+		if (projectPath == null) {
+			return;
+		}
+		Path normPath = projectPath.toAbsolutePath().normalize();
+		recentProjects.remove(normPath);
+		recentProjects.add(0, normPath);
 		int count = recentProjects.size();
 		if (count > RECENT_PROJECTS_COUNT) {
 			recentProjects.subList(RECENT_PROJECTS_COUNT, count).clear();
 		}
+		partialSync(settings -> settings.recentProjects = recentProjects);
+	}
+
+	public void removeRecentProject(Path projectPath) {
+		recentProjects.remove(projectPath);
 		partialSync(settings -> settings.recentProjects = recentProjects);
 	}
 
@@ -178,29 +265,22 @@ public class JadxSettings extends JadxCLIArgs {
 		if (pos == null || pos.getBounds() == null) {
 			return false;
 		}
-		if (window instanceof MainWindow) {
-			int extendedState = getMainWindowExtendedState();
-			if (extendedState != JFrame.NORMAL) {
-				((JFrame) window).setExtendedState(extendedState);
-				return true;
-			}
-		}
-
-		if (!isContainedInAnyScreen(pos)) {
+		if (!isAccessibleInAnyScreen(pos)) {
 			return false;
 		}
-
 		window.setBounds(pos.getBounds());
+		if (window instanceof MainWindow) {
+			((JFrame) window).setExtendedState(getMainWindowExtendedState());
+		}
 		return true;
 	}
 
-	private static boolean isContainedInAnyScreen(WindowLocation pos) {
-		Rectangle bounds = pos.getBounds();
-		if (bounds.getX() > 0 && bounds.getY() > 0) {
-			for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
-				if (gd.getDefaultConfiguration().getBounds().contains(bounds)) {
-					return true;
-				}
+	private static boolean isAccessibleInAnyScreen(WindowLocation pos) {
+		Rectangle windowBounds = pos.getBounds();
+		for (GraphicsDevice gd : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+			Rectangle screenBounds = gd.getDefaultConfiguration().getBounds();
+			if (screenBounds.intersects(windowBounds)) {
+				return true;
 			}
 		}
 		LOG.debug("Window saved position was ignored: {}", pos);
@@ -214,6 +294,23 @@ public class JadxSettings extends JadxCLIArgs {
 	public void setShowHeapUsageBar(boolean showHeapUsageBar) {
 		this.showHeapUsageBar = showHeapUsageBar;
 		partialSync(settings -> settings.showHeapUsageBar = showHeapUsageBar);
+	}
+
+	public boolean isAlwaysSelectOpened() {
+		return alwaysSelectOpened;
+	}
+
+	public void setAlwaysSelectOpened(boolean alwaysSelectOpened) {
+		this.alwaysSelectOpened = alwaysSelectOpened;
+		partialSync(settings -> settings.alwaysSelectOpened = alwaysSelectOpened);
+	}
+
+	public boolean isUseAlternativeFileDialog() {
+		return useAlternativeFileDialog;
+	}
+
+	public void setUseAlternativeFileDialog(boolean useAlternativeFileDialog) {
+		this.useAlternativeFileDialog = useAlternativeFileDialog;
 	}
 
 	public String getExcludedPackages() {
@@ -232,12 +329,20 @@ public class JadxSettings extends JadxCLIArgs {
 		this.fallbackMode = fallbackMode;
 	}
 
+	public void setUseDx(boolean useDx) {
+		this.useDx = useDx;
+	}
+
 	public void setSkipResources(boolean skipResources) {
 		this.skipResources = skipResources;
 	}
 
 	public void setSkipSources(boolean skipSources) {
 		this.skipSources = skipSources;
+	}
+
+	public void setDecompilationMode(DecompilationMode decompilationMode) {
+		this.decompilationMode = decompilationMode;
 	}
 
 	public void setShowInconsistentCode(boolean showInconsistentCode) {
@@ -264,6 +369,14 @@ public class JadxSettings extends JadxCLIArgs {
 		this.verbose = verbose;
 	}
 
+	public void setDebugInfo(boolean useDebugInfo) {
+		this.debugInfo = useDebugInfo;
+	}
+
+	public void setUserRenamesMappingsMode(UserRenamesMappingsMode mode) {
+		this.userRenamesMappingsMode = mode;
+	}
+
 	public void setDeobfuscationOn(boolean deobfuscationOn) {
 		this.deobfuscationOn = deobfuscationOn;
 	}
@@ -276,16 +389,24 @@ public class JadxSettings extends JadxCLIArgs {
 		this.deobfuscationMaxLength = deobfuscationMaxLength;
 	}
 
-	public void setDeobfuscationForceSave(boolean deobfuscationForceSave) {
-		this.deobfuscationForceSave = deobfuscationForceSave;
+	public void setDeobfuscationWhitelistStr(String value) {
+		this.deobfuscationWhitelistStr = value;
+	}
+
+	public void setGeneratedRenamesMappingFileMode(GeneratedRenamesMappingFileMode mode) {
+		this.generatedRenamesMappingFileMode = mode;
 	}
 
 	public void setDeobfuscationUseSourceNameAsAlias(boolean deobfuscationUseSourceNameAsAlias) {
 		this.deobfuscationUseSourceNameAsAlias = deobfuscationUseSourceNameAsAlias;
 	}
 
-	public void setDeobfuscationParseKotlinMetadata(boolean deobfuscationParseKotlinMetadata) {
-		this.deobfuscationParseKotlinMetadata = deobfuscationParseKotlinMetadata;
+	public void setUseKotlinMethodsForVarNames(JadxArgs.UseKotlinMethodsForVarNames useKotlinMethodsForVarNames) {
+		this.useKotlinMethodsForVarNames = useKotlinMethodsForVarNames;
+	}
+
+	public void setResourceNameSource(ResourceNameSource source) {
+		this.resourceNameSource = source;
 	}
 
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
@@ -316,6 +437,22 @@ public class JadxSettings extends JadxCLIArgs {
 		this.inlineAnonymousClasses = inlineAnonymousClasses;
 	}
 
+	public void setInlineMethods(boolean inlineMethods) {
+		this.inlineMethods = inlineMethods;
+	}
+
+	public void setMoveInnerClasses(boolean moveInnerClasses) {
+		this.moveInnerClasses = moveInnerClasses;
+	}
+
+	public void setAllowInlineKotlinLambda(boolean allowInlineKotlinLambda) {
+		this.allowInlineKotlinLambda = allowInlineKotlinLambda;
+	}
+
+	public void setExtractFinally(boolean extractFinally) {
+		this.extractFinally = extractFinally;
+	}
+
 	public void setFsCaseSensitive(boolean fsCaseSensitive) {
 		this.fsCaseSensitive = fsCaseSensitive;
 	}
@@ -328,12 +465,12 @@ public class JadxSettings extends JadxCLIArgs {
 		this.autoStartJobs = autoStartJobs;
 	}
 
-	public boolean isAutoSaveProject() {
-		return autoSaveProject;
-	}
-
-	public void setAutoSaveProject(boolean autoSaveProject) {
-		this.autoSaveProject = autoSaveProject;
+	public ShortcutsWrapper getShortcuts() {
+		if (shortcutsWrapper == null) {
+			shortcutsWrapper = new ShortcutsWrapper();
+			shortcutsWrapper.updateShortcuts(shortcuts);
+		}
+		return shortcutsWrapper;
 	}
 
 	public void setExportAsGradleProject(boolean exportAsGradleProject) {
@@ -349,12 +486,20 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.treeWidth = JadxSettings.this.treeWidth);
 	}
 
+	@JadxSettingsAdapter.GsonExclude
+	private Font cachedFont = null;
+
 	public Font getFont() {
+		if (cachedFont != null) {
+			return cachedFont;
+		}
 		if (fontStr.isEmpty()) {
 			return DEFAULT_FONT;
 		}
 		try {
-			return FontUtils.loadByStr(fontStr);
+			Font font = FontUtils.loadByStr(fontStr);
+			this.cachedFont = font;
+			return font;
 		} catch (Exception e) {
 			LOG.warn("Failed to load font: {}, reset to default", fontStr, e);
 			setFont(DEFAULT_FONT);
@@ -364,9 +509,40 @@ public class JadxSettings extends JadxCLIArgs {
 
 	public void setFont(@Nullable Font font) {
 		if (font == null) {
-			this.fontStr = "";
+			setFontStr("");
 		} else {
-			this.fontStr = FontUtils.convertToStr(font);
+			setFontStr(FontUtils.convertToStr(font));
+			this.cachedFont = font;
+		}
+	}
+
+	public String getFontStr() {
+		return fontStr;
+	}
+
+	public void setFontStr(String fontStr) {
+		this.fontStr = fontStr;
+		this.cachedFont = null;
+	}
+
+	public Font getSmaliFont() {
+		if (smaliFontStr.isEmpty()) {
+			return DEFAULT_FONT;
+		}
+		try {
+			return FontUtils.loadByStr(smaliFontStr);
+		} catch (Exception e) {
+			LOG.warn("Failed to load font: {} for smali, reset to default", smaliFontStr, e);
+			setSmaliFont(DEFAULT_FONT);
+			return DEFAULT_FONT;
+		}
+	}
+
+	public void setSmaliFont(@Nullable Font font) {
+		if (font == null) {
+			this.smaliFontStr = "";
+		} else {
+			this.smaliFontStr = FontUtils.convertToStr(font);
 		}
 	}
 
@@ -382,6 +558,14 @@ public class JadxSettings extends JadxCLIArgs {
 		this.editorThemePath = editorThemePath;
 	}
 
+	public String getLafTheme() {
+		return lafTheme;
+	}
+
+	public void setLafTheme(String lafTheme) {
+		this.lafTheme = lafTheme;
+	}
+
 	public int getMainWindowExtendedState() {
 		return mainWindowExtendedState;
 	}
@@ -391,59 +575,238 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.mainWindowExtendedState = mainWindowExtendedState);
 	}
 
+	public void setCodeAreaLineWrap(boolean lineWrap) {
+		this.codeAreaLineWrap = lineWrap;
+	}
+
+	public boolean isCodeAreaLineWrap() {
+		return this.codeAreaLineWrap;
+	}
+
+	public int getSrhResourceSkipSize() {
+		return srhResourceSkipSize;
+	}
+
+	public void setSrhResourceSkipSize(int size) {
+		srhResourceSkipSize = size;
+	}
+
+	public String getSrhResourceFileExt() {
+		return srhResourceFileExt;
+	}
+
+	public void setSrhResourceFileExt(String all) {
+		srhResourceFileExt = all.trim();
+	}
+
+	public int getSearchResultsPerPage() {
+		return searchResultsPerPage;
+	}
+
+	public void setSearchResultsPerPage(int searchResultsPerPage) {
+		this.searchResultsPerPage = searchResultsPerPage;
+	}
+
+	public boolean isUseAutoSearch() {
+		return useAutoSearch;
+	}
+
+	public void setUseAutoSearch(boolean useAutoSearch) {
+		this.useAutoSearch = useAutoSearch;
+		partialSync(settings -> settings.useAutoSearch = useAutoSearch);
+	}
+
+	public void setKeepCommonDialogOpen(boolean yes) {
+		keepCommonDialogOpen = yes;
+	}
+
+	public boolean getKeepCommonDialogOpen() {
+		return keepCommonDialogOpen;
+	}
+
+	public void setSmaliAreaShowBytecode(boolean yes) {
+		smaliAreaShowBytecode = yes;
+	}
+
+	public boolean getSmaliAreaShowBytecode() {
+		return smaliAreaShowBytecode;
+	}
+
+	public void setMainWindowVerticalSplitterLoc(int location) {
+		mainWindowVerticalSplitterLoc = location;
+		partialSync(settings -> settings.mainWindowVerticalSplitterLoc = location);
+	}
+
+	public int getMainWindowVerticalSplitterLoc() {
+		return mainWindowVerticalSplitterLoc;
+	}
+
+	public void setDebuggerStackFrameSplitterLoc(int location) {
+		debuggerStackFrameSplitterLoc = location;
+		partialSync(settings -> settings.debuggerStackFrameSplitterLoc = location);
+	}
+
+	public int getDebuggerStackFrameSplitterLoc() {
+		return debuggerStackFrameSplitterLoc;
+	}
+
+	public void setDebuggerVarTreeSplitterLoc(int location) {
+		debuggerVarTreeSplitterLoc = location;
+		partialSync(settings -> debuggerVarTreeSplitterLoc = location);
+	}
+
+	public int getDebuggerVarTreeSplitterLoc() {
+		return debuggerVarTreeSplitterLoc;
+	}
+
+	public String getAdbDialogPath() {
+		return adbDialogPath;
+	}
+
+	public void setAdbDialogPath(String path) {
+		this.adbDialogPath = path;
+	}
+
+	public String getAdbDialogHost() {
+		return adbDialogHost;
+	}
+
+	public void setAdbDialogHost(String host) {
+		this.adbDialogHost = host;
+	}
+
+	public String getAdbDialogPort() {
+		return adbDialogPort;
+	}
+
+	public void setAdbDialogPort(String port) {
+		this.adbDialogPort = port;
+	}
+
+	public void setCommentsLevel(CommentsLevel level) {
+		this.commentsLevel = level;
+	}
+
+	public LineNumbersMode getLineNumbersMode() {
+		return lineNumbersMode;
+	}
+
+	public void setIntegerFormat(IntegerFormat format) {
+		this.integerFormat = format;
+	}
+
+	public void setLineNumbersMode(LineNumbersMode lineNumbersMode) {
+		this.lineNumbersMode = lineNumbersMode;
+	}
+
+	public void setPluginOptions(Map<String, String> pluginOptions) {
+		this.pluginOptions = pluginOptions;
+	}
+
+	public CodeCacheMode getCodeCacheMode() {
+		return codeCacheMode;
+	}
+
+	public void setCodeCacheMode(CodeCacheMode codeCacheMode) {
+		this.codeCacheMode = codeCacheMode;
+	}
+
+	public UsageCacheMode getUsageCacheMode() {
+		return usageCacheMode;
+	}
+
+	public void setUsageCacheMode(UsageCacheMode usageCacheMode) {
+		this.usageCacheMode = usageCacheMode;
+	}
+
+	public @Nullable String getCacheDir() {
+		return cacheDir;
+	}
+
+	public void setCacheDir(@Nullable String cacheDir) {
+		this.cacheDir = cacheDir;
+	}
+
+	public boolean isJumpOnDoubleClick() {
+		return jumpOnDoubleClick;
+	}
+
+	public void setJumpOnDoubleClick(boolean jumpOnDoubleClick) {
+		this.jumpOnDoubleClick = jumpOnDoubleClick;
+	}
+
+	public boolean isDockLogViewer() {
+		return dockLogViewer;
+	}
+
+	public void setDockLogViewer(boolean dockLogViewer) {
+		this.dockLogViewer = dockLogViewer;
+		partialSync(settings -> this.dockLogViewer = dockLogViewer);
+	}
+
+	public XposedCodegenLanguage getXposedCodegenLanguage() {
+		return xposedCodegenLanguage;
+	}
+
+	public void setXposedCodegenLanguage(XposedCodegenLanguage language) {
+		this.xposedCodegenLanguage = language;
+	}
+
+	public void setTabDndGhostType(TabDndGhostType tabDndGhostType) {
+		this.tabDndGhostType = tabDndGhostType;
+	}
+
+	public TabDndGhostType getTabDndGhostType() {
+		return this.tabDndGhostType;
+	}
+
 	private void upgradeSettings(int fromVersion) {
 		LOG.debug("upgrade settings from version: {} to {}", fromVersion, CURRENT_SETTINGS_VERSION);
-		if (fromVersion == 0) {
-			setDeobfuscationMinLength(3);
-			setDeobfuscationUseSourceNameAsAlias(true);
-			setDeobfuscationParseKotlinMetadata(true);
-			setDeobfuscationForceSave(true);
-			setThreadsCount(1);
-			setReplaceConsts(true);
-			setSkipResources(false);
-			setAutoStartJobs(false);
+		if (fromVersion <= 10) {
+			fromVersion = 11;
+		}
+		if (fromVersion == 11) {
+			inlineMethods = true;
 			fromVersion++;
 		}
-		if (fromVersion == 1) {
-			setEditorThemePath(EditorTheme.getDefaultTheme().getPath());
+		if (fromVersion == 12) {
+			alwaysSelectOpened = false;
 			fromVersion++;
 		}
-		if (fromVersion == 2) {
-			if (getDeobfuscationMinLength() == 4) {
-				setDeobfuscationMinLength(3);
+		if (fromVersion == 13) {
+			lafTheme = LafManager.INITIAL_THEME_NAME;
+			fromVersion++;
+		}
+		if (fromVersion == 14) {
+			useKotlinMethodsForVarNames = JadxArgs.UseKotlinMethodsForVarNames.APPLY;
+			fromVersion++;
+		}
+		if (fromVersion == 15) {
+			generatedRenamesMappingFileMode = GeneratedRenamesMappingFileMode.getDefault();
+			fromVersion++;
+		}
+		if (fromVersion == 16) {
+			if (fallbackMode) {
+				decompilationMode = DecompilationMode.FALLBACK;
+			} else {
+				decompilationMode = DecompilationMode.AUTO;
 			}
 			fromVersion++;
 		}
-		if (fromVersion == 3) {
-			setLangLocale(NLS.defaultLocale());
+		if (fromVersion == 17) {
+			checkForUpdates = true;
 			fromVersion++;
 		}
-		if (fromVersion == 4) {
-			setUseImports(true);
+		if (fromVersion == 18) {
+			xposedCodegenLanguage = XposedCodegenLanguage.JAVA;
 			fromVersion++;
 		}
-		if (fromVersion == 5) {
-			setRespectBytecodeAccessModifiers(false);
+		if (fromVersion == 19) {
+			tabDndGhostType = TabDndGhostType.OUTLINE;
 			fromVersion++;
 		}
-		if (fromVersion == 6) {
-			if (getFont().getFontName().equals("Hack Regular")) {
-				setFont(null);
-			}
-			fromVersion++;
-		}
-		if (fromVersion == 7) {
-			outDir = null;
-			outDirSrc = null;
-			outDirRes = null;
-			fromVersion++;
-		}
-		if (fromVersion == 8) {
-			fromVersion++;
-		}
-		if (fromVersion == 9) {
-			showHeapUsageBar = false;
-			fromVersion++;
+		if (fromVersion != CURRENT_SETTINGS_VERSION) {
+			LOG.warn("Incorrect settings upgrade. Expected version: {}, got: {}", CURRENT_SETTINGS_VERSION, fromVersion);
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();

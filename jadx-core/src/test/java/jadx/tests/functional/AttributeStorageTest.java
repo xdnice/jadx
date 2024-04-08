@@ -3,9 +3,9 @@ package jadx.tests.functional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import jadx.api.plugins.input.data.attributes.IJadxAttribute;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.AttributeStorage;
-import jadx.core.dex.attributes.IAttribute;
 
 import static jadx.core.dex.attributes.AFlag.SYNTHETIC;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -35,9 +35,9 @@ public class AttributeStorageTest {
 
 	public static final AType<TestAttr> TEST = new AType<>();
 
-	public static class TestAttr implements IAttribute {
+	public static class TestAttr implements IJadxAttribute {
 		@Override
-		public AType<TestAttr> getType() {
+		public AType<TestAttr> getAttrType() {
 			return TEST;
 		}
 	}
@@ -69,16 +69,5 @@ public class AttributeStorageTest {
 
 		assertThat(storage.contains(TEST), is(true));
 		assertThat(storage.get(TEST), is(attr));
-	}
-
-	@Test
-	public void clear() {
-		storage.add(SYNTHETIC);
-		storage.add(new TestAttr());
-		storage.clear();
-
-		assertThat(storage.contains(SYNTHETIC), is(false));
-		assertThat(storage.contains(TEST), is(false));
-		assertThat(storage.get(TEST), nullValue());
 	}
 }

@@ -4,9 +4,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
+
+import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.attributes.AttrNode;
 import jadx.core.dex.instructions.ArithNode;
@@ -154,7 +156,7 @@ public final class IfCondition extends AttrNode {
 				return i;
 			}
 			if (c.getOp() == IfOp.EQ && c.getB().isFalse()) {
-				cond = not(new IfCondition(c.invert()));
+				cond = new IfCondition(Mode.NOT, Collections.singletonList(new IfCondition(c.invert())));
 			} else {
 				c.normalize();
 			}
@@ -251,7 +253,7 @@ public final class IfCondition extends AttrNode {
 	}
 
 	public List<RegisterArg> getRegisterArgs() {
-		List<RegisterArg> list = new LinkedList<>();
+		List<RegisterArg> list = new ArrayList<>();
 		if (mode == Mode.COMPARE) {
 			compare.getInsn().getRegisterArgs(list);
 		} else {
@@ -260,6 +262,38 @@ public final class IfCondition extends AttrNode {
 			}
 		}
 		return list;
+	}
+
+	public void visitInsns(Consumer<InsnNode> visitor) {
+		if (mode == Mode.COMPARE) {
+			compare.getInsn().visitInsns(visitor);
+		} else {
+			args.forEach(arg -> arg.visitInsns(visitor));
+		}
+	}
+
+	public List<InsnNode> collectInsns() {
+		List<InsnNode> list = new ArrayList<>();
+		visitInsns(list::add);
+		return list;
+	}
+
+	public int getSourceLine() {
+		for (InsnNode insn : collectInsns()) {
+			int line = insn.getSourceLine();
+			if (line != 0) {
+				return line;
+			}
+		}
+		return 0;
+	}
+
+	@Nullable
+	public InsnNode getFirstInsn() {
+		if (mode == Mode.COMPARE) {
+			return compare.getInsn();
+		}
+		return args.get(0).getFirstInsn();
 	}
 
 	@Override
@@ -313,5 +347,4 @@ public final class IfCondition extends AttrNode {
 		result = 31 * result + (compare != null ? compare.hashCode() : 0);
 		return result;
 	}
-
 }

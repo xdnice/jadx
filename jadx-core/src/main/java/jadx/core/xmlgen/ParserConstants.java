@@ -28,9 +28,13 @@ public class ParserConstants {
 	protected static final int RES_XML_LAST_CHUNK_TYPE = 0x017f;
 	protected static final int RES_XML_RESOURCE_MAP_TYPE = 0x0180;
 
-	protected static final int RES_TABLE_PACKAGE_TYPE = 0x0200;
-	protected static final int RES_TABLE_TYPE_TYPE = 0x0201;
-	protected static final int RES_TABLE_TYPE_SPEC_TYPE = 0x0202;
+	protected static final int RES_TABLE_PACKAGE_TYPE = 0x0200; // 512
+	protected static final int RES_TABLE_TYPE_TYPE = 0x0201; // 513
+	protected static final int RES_TABLE_TYPE_SPEC_TYPE = 0x0202; // 514
+	protected static final int RES_TABLE_TYPE_LIBRARY = 0x0203; // 515
+	protected static final int RES_TABLE_TYPE_OVERLAY = 0x0204; // 516
+	protected static final int RES_TABLE_TYPE_OVERLAY_POLICY = 0x0205; // 517
+	protected static final int RES_TABLE_TYPE_STAGED_ALIAS = 0x0206; // 518
 
 	/**
 	 * Type constants
@@ -151,7 +155,7 @@ public class ParserConstants {
 	protected static final int FLAG_COMPLEX = 0x0001;
 	// If set, this resource has been declared public, so libraries are allowed to reference it.
 	protected static final int FLAG_PUBLIC = 0x0002;
-	// If set, this is a weak resource and may be overriden by strong resources of the same name/type.
+	// If set, this is a weak resource and may be overridden by strong resources of the same name/type.
 	// This is only useful during linking with other resource tables.
 	protected static final int FLAG_WEAK = 0x0004;
 

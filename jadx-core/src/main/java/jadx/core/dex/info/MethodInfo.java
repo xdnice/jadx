@@ -5,6 +5,7 @@ import java.util.Objects;
 
 import org.jetbrains.annotations.Nullable;
 
+import jadx.api.plugins.input.data.IMethodProto;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.instructions.args.ArgType;
@@ -18,6 +19,9 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 	private final List<ArgType> argTypes;
 	private final ClassInfo declClass;
 	private final String shortId;
+	private final String rawFullId;
+	private final int hash;
+
 	private String alias;
 
 	private MethodInfo(ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
@@ -27,14 +31,18 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 		this.argTypes = args;
 		this.retType = retType;
 		this.shortId = makeShortId(name, argTypes, retType);
+		this.rawFullId = declClass.makeRawFullName() + '.' + shortId;
+		this.hash = calcHashCode();
 	}
 
 	public static MethodInfo fromRef(RootNode root, IMethodRef methodRef) {
 		InfoStorage infoStorage = root.getInfoStorage();
 		int uniqId = methodRef.getUniqId();
-		MethodInfo prevMth = infoStorage.getByUniqId(uniqId);
-		if (prevMth != null) {
-			return prevMth;
+		if (uniqId != 0) {
+			MethodInfo prevMth = infoStorage.getByUniqId(uniqId);
+			if (prevMth != null) {
+				return prevMth;
+			}
 		}
 		methodRef.load();
 		ArgType parentClsType = ArgType.parse(methodRef.getParentClassType());
@@ -43,13 +51,21 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 		List<ArgType> args = Utils.collectionMap(methodRef.getArgTypes(), ArgType::parse);
 		MethodInfo newMth = new MethodInfo(parentClass, methodRef.getName(), args, returnType);
 		MethodInfo uniqMth = infoStorage.putMethod(newMth);
-		infoStorage.putByUniqId(uniqId, uniqMth);
+		if (uniqId != 0) {
+			infoStorage.putByUniqId(uniqId, uniqMth);
+		}
 		return uniqMth;
 	}
 
 	public static MethodInfo fromDetails(RootNode root, ClassInfo declClass, String name, List<ArgType> args, ArgType retType) {
 		MethodInfo newMth = new MethodInfo(declClass, name, args, retType);
 		return root.getInfoStorage().putMethod(newMth);
+	}
+
+	public static MethodInfo fromMethodProto(RootNode root, ClassInfo declClass, String name, IMethodProto proto) {
+		List<ArgType> args = Utils.collectionMap(proto.getArgTypes(), ArgType::parse);
+		ArgType returnType = ArgType.parse(proto.getReturnType());
+		return fromDetails(root, declClass, name, args, returnType);
 	}
 
 	public String makeSignature(boolean includeRetType) {
@@ -90,12 +106,16 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 		return declClass.getFullName() + '.' + name;
 	}
 
+	public String getAliasFullName() {
+		return declClass.getAliasFullName() + '.' + alias;
+	}
+
 	public String getFullId() {
 		return declClass.getFullName() + '.' + shortId;
 	}
 
 	public String getRawFullId() {
-		return declClass.makeRawFullName() + '.' + shortId;
+		return rawFullId;
 	}
 
 	/**
@@ -137,13 +157,21 @@ public final class MethodInfo implements Comparable<MethodInfo> {
 		this.alias = alias;
 	}
 
+	public void removeAlias() {
+		this.alias = name;
+	}
+
 	public boolean hasAlias() {
 		return !name.equals(alias);
 	}
 
+	public int calcHashCode() {
+		return shortId.hashCode() + 31 * declClass.hashCode();
+	}
+
 	@Override
 	public int hashCode() {
-		return shortId.hashCode() + 31 * declClass.hashCode();
+		return hash;
 	}
 
 	@Override

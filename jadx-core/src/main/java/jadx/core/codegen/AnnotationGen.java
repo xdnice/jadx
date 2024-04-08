@@ -7,14 +7,16 @@ import java.util.Map.Entry;
 
 import org.jetbrains.annotations.Nullable;
 
-import jadx.api.plugins.input.data.IFieldData;
+import jadx.api.ICodeWriter;
+import jadx.api.plugins.input.data.IFieldRef;
 import jadx.api.plugins.input.data.annotations.EncodedValue;
 import jadx.api.plugins.input.data.annotations.IAnnotation;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
+import jadx.api.plugins.input.data.attributes.types.AnnotationDefaultAttr;
+import jadx.api.plugins.input.data.attributes.types.AnnotationMethodParamsAttr;
+import jadx.api.plugins.input.data.attributes.types.AnnotationsAttr;
 import jadx.core.Consts;
-import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.IAttributeNode;
-import jadx.core.dex.attributes.annotations.AnnotationsList;
-import jadx.core.dex.attributes.annotations.MethodParameters;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.ClassNode;
@@ -34,24 +36,24 @@ public class AnnotationGen {
 		this.classGen = classGen;
 	}
 
-	public void addForClass(CodeWriter code) {
+	public void addForClass(ICodeWriter code) {
 		add(cls, code);
 	}
 
-	public void addForMethod(CodeWriter code, MethodNode mth) {
+	public void addForMethod(ICodeWriter code, MethodNode mth) {
 		add(mth, code);
 	}
 
-	public void addForField(CodeWriter code, FieldNode field) {
+	public void addForField(ICodeWriter code, FieldNode field) {
 		add(field, code);
 	}
 
-	public void addForParameter(CodeWriter code, MethodParameters paramsAnnotations, int n) {
-		List<AnnotationsList> paramList = paramsAnnotations.getParamList();
+	public void addForParameter(ICodeWriter code, AnnotationMethodParamsAttr paramsAnnotations, int n) {
+		List<AnnotationsAttr> paramList = paramsAnnotations.getParamList();
 		if (n >= paramList.size()) {
 			return;
 		}
-		AnnotationsList aList = paramList.get(n);
+		AnnotationsAttr aList = paramList.get(n);
 		if (aList == null || aList.isEmpty()) {
 			return;
 		}
@@ -61,21 +63,21 @@ public class AnnotationGen {
 		}
 	}
 
-	private void add(IAttributeNode node, CodeWriter code) {
-		AnnotationsList aList = node.get(AType.ANNOTATION_LIST);
+	private void add(IAttributeNode node, ICodeWriter code) {
+		AnnotationsAttr aList = node.get(JadxAttrType.ANNOTATION_LIST);
 		if (aList == null || aList.isEmpty()) {
 			return;
 		}
 		for (IAnnotation a : aList.getAll()) {
 			String aCls = a.getAnnotationClass();
-			if (!aCls.startsWith(Consts.DALVIK_ANNOTATION_PKG)) {
+			if (!aCls.equals(Consts.OVERRIDE_ANNOTATION)) {
 				code.startLine();
 				formatAnnotation(code, a);
 			}
 		}
 	}
 
-	private void formatAnnotation(CodeWriter code, IAnnotation a) {
+	private void formatAnnotation(ICodeWriter code, IAnnotation a) {
 		code.add('@');
 		ClassNode annCls = cls.root().resolveClass(a.getAnnotationClass());
 		if (annCls != null) {
@@ -116,7 +118,7 @@ public class AnnotationGen {
 		return paramName;
 	}
 
-	public void addThrows(MethodNode mth, CodeWriter code) {
+	public void addThrows(MethodNode mth, ICodeWriter code) {
 		List<ArgType> throwList = mth.getThrows();
 		if (!throwList.isEmpty()) {
 			code.add(" throws ");
@@ -130,24 +132,22 @@ public class AnnotationGen {
 		}
 	}
 
-	public EncodedValue getAnnotationDefaultValue(String name) {
-		IAnnotation an = cls.getAnnotation(Consts.DALVIK_ANNOTATION_DEFAULT);
-		if (an != null) {
-			EncodedValue defValue = an.getDefaultValue();
-			if (defValue != null) {
-				IAnnotation defAnnotation = (IAnnotation) defValue.getValue();
-				return defAnnotation.getValues().get(name);
-			}
+	public EncodedValue getAnnotationDefaultValue(MethodNode mth) {
+		AnnotationDefaultAttr defaultAttr = mth.get(JadxAttrType.ANNOTATION_DEFAULT);
+		if (defaultAttr == null) {
+			return null;
 		}
-		return null;
+		return defaultAttr.getValue();
 	}
 
 	// TODO: refactor this boilerplate code
-	public void encodeValue(RootNode root, CodeWriter code, EncodedValue encodedValue) {
+	public void encodeValue(RootNode root, ICodeWriter code, EncodedValue encodedValue) {
 		if (encodedValue == null) {
 			code.add("null");
 			return;
 		}
+
+		StringUtils stringUtils = getStringUtils();
 		Object value = encodedValue.getValue();
 		switch (encodedValue.getType()) {
 			case ENCODED_NULL:
@@ -157,28 +157,28 @@ public class AnnotationGen {
 				code.add(Boolean.TRUE.equals(value) ? "true" : "false");
 				break;
 			case ENCODED_BYTE:
-				code.add(TypeGen.formatByte((Byte) value, false));
+				code.add(stringUtils.formatByte((Byte) value, false));
 				break;
 			case ENCODED_SHORT:
-				code.add(TypeGen.formatShort((Short) value, false));
+				code.add(stringUtils.formatShort((Short) value, false));
 				break;
 			case ENCODED_CHAR:
-				code.add(getStringUtils().unescapeChar((Character) value));
+				code.add(stringUtils.unescapeChar((Character) value));
 				break;
 			case ENCODED_INT:
-				code.add(TypeGen.formatInteger((Integer) value, false));
+				code.add(stringUtils.formatInteger((Integer) value, false));
 				break;
 			case ENCODED_LONG:
-				code.add(TypeGen.formatLong((Long) value, false));
+				code.add(stringUtils.formatLong((Long) value, false));
 				break;
 			case ENCODED_FLOAT:
-				code.add(TypeGen.formatFloat((Float) value));
+				code.add(StringUtils.formatFloat((Float) value));
 				break;
 			case ENCODED_DOUBLE:
-				code.add(TypeGen.formatDouble((Double) value));
+				code.add(StringUtils.formatDouble((Double) value));
 				break;
 			case ENCODED_STRING:
-				code.add(getStringUtils().unescapeString((String) value));
+				code.add(stringUtils.unescapeString((String) value));
 				break;
 			case ENCODED_TYPE:
 				classGen.useType(code, ArgType.parse((String) value));
@@ -187,9 +187,9 @@ public class AnnotationGen {
 			case ENCODED_ENUM:
 			case ENCODED_FIELD:
 				// must be a static field
-				if (value instanceof IFieldData) {
-					FieldInfo field = FieldInfo.fromData(root, (IFieldData) value);
-					InsnGen.makeStaticFieldAccess(code, field, classGen);
+				if (value instanceof IFieldRef) {
+					FieldInfo fieldInfo = FieldInfo.fromRef(root, (IFieldRef) value);
+					InsnGen.makeStaticFieldAccess(code, fieldInfo, classGen);
 				} else if (value instanceof FieldInfo) {
 					InsnGen.makeStaticFieldAccess(code, (FieldInfo) value, classGen);
 				} else {

@@ -1,6 +1,7 @@
 package jadx.gui.utils;
 
-import java.awt.*;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.io.InputStream;
 
 import javax.swing.text.StyleContext;
@@ -24,7 +25,7 @@ public class FontUtils {
 	}
 
 	public static Font loadByStr(String fontDesc) {
-		String[] parts = fontDesc.split("-");
+		String[] parts = fontDesc.split("/");
 		if (parts.length != 3) {
 			throw new JadxRuntimeException("Unsupported font description format: " + fontDesc);
 		}
@@ -41,9 +42,12 @@ public class FontUtils {
 	}
 
 	public static String convertToStr(Font font) {
+		if (font.getSize() < 1) {
+			throw new JadxRuntimeException("Bad font size: " + font.getSize());
+		}
 		return font.getFontName()
-				+ '-' + convertFontStyleToString(font.getStyle())
-				+ '-' + font.getSize();
+				+ '/' + convertFontStyleToString(font.getStyle())
+				+ '/' + font.getSize();
 	}
 
 	public static String convertFontStyleToString(int style) {

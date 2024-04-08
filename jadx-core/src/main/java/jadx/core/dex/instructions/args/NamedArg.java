@@ -22,6 +22,7 @@ public final class NamedArg extends InsnArg implements Named {
 		return true;
 	}
 
+	@Override
 	public void setName(@NotNull String name) {
 		this.name = name;
 	}
@@ -45,6 +46,11 @@ public final class NamedArg extends InsnArg implements Named {
 			return false;
 		}
 		return name.equals(((NamedArg) o).name);
+	}
+
+	@Override
+	public String toShortString() {
+		return name;
 	}
 
 	@Override

@@ -1,29 +1,17 @@
 package jadx.gui.ui.codearea;
 
-import java.awt.event.ActionEvent;
+import jadx.gui.treemodel.JNode;
+import jadx.gui.ui.action.ActionModel;
 
-import org.jetbrains.annotations.Nullable;
-
-import jadx.gui.utils.JumpPosition;
-import jadx.gui.utils.NLS;
-
-public final class GoToDeclarationAction extends JNodeMenuAction<JumpPosition> {
+public final class GoToDeclarationAction extends JNodeAction {
 	private static final long serialVersionUID = -1186470538894941301L;
 
 	public GoToDeclarationAction(CodeArea codeArea) {
-		super(NLS.str("popup.go_to_declaration"), codeArea);
+		super(ActionModel.GOTO_DECLARATION, codeArea);
 	}
 
 	@Override
-	public void actionPerformed(ActionEvent e) {
-		if (node != null) {
-			codeArea.getContentPanel().getTabbedPane().codeJump(node);
-		}
-	}
-
-	@Nullable
-	@Override
-	public JumpPosition getNodeByOffset(int offset) {
-		return codeArea.getDefPosForNodeAtOffset(offset);
+	public void runAction(JNode node) {
+		getCodeArea().getContentPanel().getTabbedPane().codeJump(node);
 	}
 }

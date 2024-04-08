@@ -1,44 +1,30 @@
 package jadx.gui.ui.codearea;
 
-import java.awt.event.ActionEvent;
-
-import javax.swing.event.PopupMenuEvent;
-
-import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.RenameDialog;
-import jadx.gui.utils.NLS;
+import jadx.gui.treemodel.JRenameNode;
+import jadx.gui.ui.action.ActionModel;
+import jadx.gui.ui.dialog.RenameDialog;
 
-public final class RenameAction extends JNodeMenuAction<JNode> {
+public final class RenameAction extends JNodeAction {
 	private static final long serialVersionUID = -4680872086148463289L;
 
-	private static final Logger LOG = LoggerFactory.getLogger(RenameAction.class);
-
 	public RenameAction(CodeArea codeArea) {
-		super(NLS.str("popup.rename"), codeArea);
+		super(ActionModel.CODE_RENAME, codeArea);
 	}
 
 	@Override
-	public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
-		super.popupMenuWillBecomeVisible(e);
-		setEnabled(node != null && node.canRename());
-	}
-
-	@Override
-	public void actionPerformed(ActionEvent e) {
+	public boolean isActionEnabled(JNode node) {
 		if (node == null) {
-			LOG.info("node == null!");
-			return;
+			return false;
 		}
-		RenameDialog.rename(codeArea.getMainWindow(), node);
+		if (node instanceof JRenameNode) {
+			return ((JRenameNode) node).canRename();
+		}
+		return false;
 	}
 
-	@Nullable
 	@Override
-	public JNode getNodeByOffset(int offset) {
-		return codeArea.getJNodeAtOffset(offset);
+	public void runAction(JNode node) {
+		RenameDialog.rename(getCodeArea().getMainWindow(), (JRenameNode) node);
 	}
 }

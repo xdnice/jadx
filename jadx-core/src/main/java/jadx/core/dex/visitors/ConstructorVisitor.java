@@ -1,11 +1,9 @@
 package jadx.core.dex.visitors;
 
-import java.util.ArrayList;
-
 import org.jetbrains.annotations.Nullable;
 
 import jadx.core.codegen.TypeGen;
-import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.InvokeNode;
 import jadx.core.dex.instructions.args.InsnArg;
@@ -33,11 +31,16 @@ public class ConstructorVisitor extends AbstractVisitor {
 		if (mth.isNoCode()) {
 			return;
 		}
-
-		replaceInvoke(mth);
+		if (replaceInvoke(mth)) {
+			MoveInlineVisitor.moveInline(mth);
+		}
+		if (mth.contains(AFlag.RERUN_SSA_TRANSFORM)) {
+			SSATransform.rerun(mth);
+		}
 	}
 
-	private static void replaceInvoke(MethodNode mth) {
+	private static boolean replaceInvoke(MethodNode mth) {
+		boolean replaced = false;
 		InsnRemover remover = new InsnRemover(mth);
 		for (BlockNode block : mth.getBasicBlocks()) {
 			remover.setBlock(block);
@@ -45,65 +48,71 @@ public class ConstructorVisitor extends AbstractVisitor {
 			for (int i = 0; i < size; i++) {
 				InsnNode insn = block.getInstructions().get(i);
 				if (insn.getType() == InsnType.INVOKE) {
-					processInvoke(mth, block, i, remover);
+					replaced |= processInvoke(mth, block, i, remover);
 				}
 			}
 			remover.perform();
 		}
+		return replaced;
 	}
 
-	private static void processInvoke(MethodNode mth, BlockNode block, int indexInBlock, InsnRemover remover) {
-		ClassNode parentClass = mth.getParentClass();
-		InsnNode insn = block.getInstructions().get(indexInBlock);
-		InvokeNode inv = (InvokeNode) insn;
-		MethodInfo callMth = inv.getCallMth();
-		if (!callMth.isConstructor()) {
-			return;
+	private static boolean processInvoke(MethodNode mth, BlockNode block, int indexInBlock, InsnRemover remover) {
+		InvokeNode inv = (InvokeNode) block.getInstructions().get(indexInBlock);
+		if (!inv.getCallMth().isConstructor()) {
+			return false;
 		}
-		InsnNode instArgAssignInsn = ((RegisterArg) inv.getArg(0)).getAssignInsn();
 		ConstructorInsn co = new ConstructorInsn(mth, inv);
-		co.rebindArgs();
-		boolean remove = false;
-		if (co.isSuper() && (co.getArgsCount() == 0 || parentClass.isEnum())) {
-			remove = true;
-		} else if (co.isThis() && co.getArgsCount() == 0) {
-			MethodNode defCo = parentClass.searchMethodByShortId(callMth.getShortId());
-			if (defCo == null || defCo.isNoCode()) {
-				// default constructor not implemented
-				remove = true;
-			}
+		if (canRemoveConstructor(mth, co)) {
+			remover.addAndUnbind(inv);
+			return false;
 		}
-		// remove super() call in instance initializer
-		if (parentClass.isAnonymous() && mth.isDefaultConstructor() && co.isSuper()) {
-			remove = true;
-		}
-		if (remove) {
-			remover.addAndUnbind(insn);
-			return;
-		}
+		co.inheritMetadata(inv);
+
+		RegisterArg instanceArg = ((RegisterArg) inv.getArg(0));
+		instanceArg.getSVar().removeUse(instanceArg);
 		if (co.isNewInstance()) {
-			InsnNode newInstInsn = removeAssignChain(mth, instArgAssignInsn, remover, InsnType.NEW_INSTANCE);
-			if (newInstInsn != null) {
-				remover.addWithoutUnbind(newInstInsn);
-				RegisterArg instArg = newInstInsn.getResult();
-				RegisterArg resultArg = co.getResult();
-				if (!resultArg.equals(instArg)) {
-					// replace all usages of 'instArg' with result of this constructor instruction
-					for (RegisterArg useArg : new ArrayList<>(instArg.getSVar().getUseList())) {
-						InsnNode parentInsn = useArg.getParentInsn();
-						if (parentInsn != null) {
-							parentInsn.replaceArg(useArg, resultArg.duplicate());
-						}
+			InsnNode assignInsn = instanceArg.getAssignInsn();
+			if (assignInsn != null) {
+				if (assignInsn.getType() == InsnType.CONSTRUCTOR) {
+					// arg already used in another constructor instruction
+					mth.add(AFlag.RERUN_SSA_TRANSFORM);
+				} else {
+					InsnNode newInstInsn = removeAssignChain(mth, assignInsn, remover, InsnType.NEW_INSTANCE);
+					if (newInstInsn != null) {
+						co.inheritMetadata(newInstInsn);
+						newInstInsn.add(AFlag.REMOVE);
+						remover.addWithoutUnbind(newInstInsn);
 					}
 				}
 			}
+			// convert instance arg from 'use' to 'assign'
+			co.setResult(instanceArg.duplicate());
 		}
+		co.rebindArgs();
 		ConstructorInsn replace = processConstructor(mth, co);
 		if (replace != null) {
 			remover.addAndUnbind(co);
-			co = replace;
+			BlockUtils.replaceInsn(mth, block, indexInBlock, replace);
+		} else {
+			BlockUtils.replaceInsn(mth, block, indexInBlock, co);
 		}
-		BlockUtils.replaceInsn(mth, block, indexInBlock, co);
+		return true;
+	}
+
+	private static boolean canRemoveConstructor(MethodNode mth, ConstructorInsn co) {
+		ClassNode parentClass = mth.getParentClass();
+		if (co.isSuper() && (co.getArgsCount() == 0 || parentClass.isEnum())) {
+			return true;
+		}
+		if (co.isThis() && co.getArgsCount() == 0) {
+			MethodNode defCo = parentClass.searchMethodByShortId(co.getCallMth().getShortId());
+			if (defCo == null || defCo.isNoCode()) {
+				// default constructor not implemented
+				return true;
+			}
+		}
+		// remove super() call in instance initializer
+		return parentClass.isAnonymous() && mth.isDefaultConstructor() && co.isSuper();
 	}
 
 	/**
@@ -136,6 +145,7 @@ public class ConstructorVisitor extends AbstractVisitor {
 		}
 		ConstructorInsn newInsn = new ConstructorInsn(defCtr.getMethodInfo(), co.getCallType());
 		newInsn.setResult(co.getResult().duplicate());
+		newInsn.inheritMetadata(co);
 		return newInsn;
 	}
 

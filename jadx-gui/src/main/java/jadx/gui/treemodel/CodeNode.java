@@ -1,24 +1,24 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
+import javax.swing.Icon;
+
+import org.jetbrains.annotations.NotNull;
 
 import jadx.api.JavaNode;
-import jadx.gui.utils.search.StringRef;
 
 public class CodeNode extends JNode {
-
 	private static final long serialVersionUID = 1658650786734966545L;
 
+	private final transient JClass rootCls;
 	private final transient JNode jNode;
-	private final transient JClass jParent;
-	private final transient StringRef line;
-	private final transient int lineNum;
+	private final transient String line;
+	private final transient int pos;
 
-	public CodeNode(JNode jNode, int lineNum, StringRef lineStr) {
+	public CodeNode(JClass rootCls, JNode jNode, String lineStr, int pos) {
+		this.rootCls = rootCls;
 		this.jNode = jNode;
-		this.jParent = this.jNode.getJParent();
 		this.line = lineStr;
-		this.lineNum = lineNum;
+		this.pos = pos;
 	}
 
 	@Override
@@ -38,28 +38,12 @@ public class CodeNode extends JNode {
 
 	@Override
 	public JClass getRootClass() {
-		JClass parent = jParent;
-		if (parent != null) {
-			return parent.getRootClass();
-		}
-		if (jNode instanceof JClass) {
-			return (JClass) jNode;
-		}
-		return null;
-	}
-
-	public StringRef getLineStr() {
-		return line;
-	}
-
-	@Override
-	public int getLine() {
-		return lineNum;
+		return rootCls;
 	}
 
 	@Override
 	public String makeDescString() {
-		return line.toString();
+		return line;
 	}
 
 	@Override
@@ -69,12 +53,37 @@ public class CodeNode extends JNode {
 
 	@Override
 	public String makeString() {
-		return jNode.makeLongString();
+		return jNode.makeString();
+	}
+
+	@Override
+	public String makeStringHtml() {
+		return jNode.makeStringHtml();
 	}
 
 	@Override
 	public String makeLongString() {
-		return makeString();
+		return jNode.makeLongString();
+	}
+
+	@Override
+	public String makeLongStringHtml() {
+		return jNode.makeLongStringHtml();
+	}
+
+	@Override
+	public boolean disableHtml() {
+		return jNode.disableHtml();
+	}
+
+	@Override
+	public String getSyntaxName() {
+		return jNode.getSyntaxName();
+	}
+
+	@Override
+	public int getPos() {
+		return pos;
 	}
 
 	@Override
@@ -92,5 +101,13 @@ public class CodeNode extends JNode {
 	@Override
 	public int hashCode() {
 		return jNode.hashCode();
+	}
+
+	@Override
+	public int compareTo(@NotNull JNode other) {
+		if (other instanceof CodeNode) {
+			return jNode.compareTo(((CodeNode) other).jNode);
+		}
+		return super.compareTo(other);
 	}
 }

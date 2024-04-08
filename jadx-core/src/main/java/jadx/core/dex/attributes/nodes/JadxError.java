@@ -4,7 +4,7 @@ import java.util.Objects;
 
 import org.jetbrains.annotations.NotNull;
 
-import jadx.core.codegen.CodeWriter;
+import jadx.api.ICodeWriter;
 import jadx.core.utils.Utils;
 
 public class JadxError implements Comparable<JadxError> {
@@ -50,16 +50,12 @@ public class JadxError implements Comparable<JadxError> {
 	@Override
 	public String toString() {
 		StringBuilder str = new StringBuilder();
-		str.append("JadxError: ");
-		if (error != null) {
-			str.append(error);
-			str.append(' ');
-		}
+		str.append("JadxError: ").append(error).append(' ');
 		if (cause != null) {
 			str.append(cause.getClass());
 			str.append(':');
 			str.append(cause.getMessage());
-			str.append(CodeWriter.NL);
+			str.append(ICodeWriter.NL);
 			str.append(Utils.getStackTrace(cause));
 		}
 		return str.toString();
