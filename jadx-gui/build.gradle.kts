@@ -25,7 +25,7 @@ dependencies {
 	implementation("com.pinterest.ktlint:ktlint-ruleset-standard:1.2.1")
 
 	implementation("org.jcommander:jcommander:1.83")
-	implementation("ch.qos.logback:logback-classic:1.5.3")
+	implementation("ch.qos.logback:logback-classic:1.5.6")
 	implementation("dev.dirs:directories:26")
 
 	implementation("com.fifesoft:rsyntaxtextarea:3.4.0")
@@ -38,12 +38,12 @@ dependencies {
 
 	implementation("com.google.code.gson:gson:2.10.1")
 	implementation("org.apache.commons:commons-lang3:3.14.0")
-	implementation("org.apache.commons:commons-text:1.11.0")
-	implementation("commons-io:commons-io:2.16.0")
+	implementation("org.apache.commons:commons-text:1.12.0")
+	implementation("commons-io:commons-io:2.16.1")
 
 	implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 	implementation("com.github.akarnokd:rxjava2-swing:0.3.7")
-	implementation("com.android.tools.build:apksig:8.3.1")
+	implementation("com.android.tools.build:apksig:8.3.2")
 	implementation("io.github.skylot:jdwp:2.0.0")
 
 	testImplementation(project(":jadx-core").dependencyProject.sourceSets.getByName("test").output)
@@ -111,6 +111,7 @@ launch4j {
 	windowTitle.set("jadx")
 	companyName.set("jadx")
 	jreMinVersion.set("11")
+	chdir.set("")
 	jvmOptions.set(application.applicationDefaultJvmArgs.toSet())
 	requires64Bit.set(true)
 	initialHeapPercent.set(5)
